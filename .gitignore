@@ -19,3 +19,6 @@ ghp_*
 
 # Temp
 tmp/
+
+# Node
+node_modules/
