@@ -101,6 +101,43 @@ fi
   echo
 } >> "$OUT_DIR/decision.md"
 
+# 5) L2 dynamic sandbox
+l2_exit=0
+if [[ -n "$SECURECLAW_SCRIPTS" ]] && command -v python3 >/dev/null 2>&1; then
+  {
+    echo "## L2 Dynamic Sandbox";
+    echo "Target: $TARGET_DIR";
+    echo;
+  } >> "$OUT_DIR/l2_summary.md"
+
+  set +e
+  python3 "$SECURECLAW_SCRIPTS/l2-sandbox.py" "$TARGET_DIR" \
+    --output "$OUT_DIR/l2_report.json" \
+    >>"$OUT_DIR/l2_summary.md" 2>&1
+  l2_exit=$?
+  set -e
+
+  if [[ $l2_exit -eq 0 ]]; then
+    echo "L2 RESULT: OK" >>"$OUT_DIR/l2_summary.md"
+    l2_label="OK"
+  elif [[ $l2_exit -eq 1 ]]; then
+    echo "L2 RESULT: BLOCKED — dangerous runtime behavior detected" >>"$OUT_DIR/l2_summary.md"
+    l2_label="BLOCKED"
+  else
+    echo "L2 RESULT: WARN — suspicious runtime behavior" >>"$OUT_DIR/l2_summary.md"
+    l2_label="WARN"
+  fi
+else
+  l2_label="SKIP"
+fi
+
+{
+  echo "- l2_sandbox exit: $l2_exit (0=ok, 1=blocked, 2=warn)"
+  echo "- l2_sandbox result: $l2_label"
+  echo
+} >> "$OUT_DIR/decision.md"
+
+# Block on any critical finding
 if [[ $policy_exit -eq 1 ]]; then
   echo "❌ SkillGate intake BLOCKED: block-level policy violations in $SKILL_NAME. Report at $OUT_DIR"
   exit 1
@@ -108,6 +145,11 @@ fi
 
 if [[ $ioc_exit -eq 1 ]]; then
   echo "❌ SkillGate intake BLOCKED: IOC match in $SKILL_NAME. Report at $OUT_DIR"
+  exit 1
+fi
+
+if [[ $l2_exit -eq 1 ]]; then
+  echo "❌ SkillGate intake BLOCKED: dangerous runtime behavior in $SKILL_NAME. Report at $OUT_DIR"
   exit 1
 fi
 

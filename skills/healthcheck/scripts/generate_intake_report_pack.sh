@@ -38,12 +38,16 @@ else
   echo "WARN: references/PERMISSIONS.md not found; add it to the pack manually" >&2
 fi
 
-# Run addon checks if script exists (best-effort)
+# Run addon checks — surface exit code to caller
 if [[ -x "scripts/addon_checks.sh" ]]; then
-  echo "Running addon checks (best-effort)..." >&2
+  echo "Running addon checks..." >&2
   set +e
-  scripts/addon_checks.sh . "$OUT_DIR" >/dev/null 2>&1
+  scripts/addon_checks.sh . "$OUT_DIR"
+  addon_exit=$?
   set -e
+  if [[ $addon_exit -ne 0 ]]; then
+    echo "WARN: addon_checks reported findings (exit=$addon_exit) — see $OUT_DIR/addon_checks.log" >&2
+  fi
 fi
 
 echo "OK: created report pack at $OUT_DIR"
