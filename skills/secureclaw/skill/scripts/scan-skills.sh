@@ -6,6 +6,8 @@
 #        bash scan-skills.sh /path/to/skill (scan specific skill)
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 OPENCLAW_DIR=""
 for dir in "$HOME/.openclaw" "$HOME/.moltbot" "$HOME/.clawdbot" "$HOME/clawd"; do
   [ -d "$dir" ] && OPENCLAW_DIR="$dir" && break
@@ -54,6 +56,19 @@ scan_dir() {
     *solana-wallet*|*phantom-tracker*|*polymarket-*|*better-polymarket*|*auto-updater*|*clawhub[0-9]*|*clawhubb*|*cllawhub*)
       ISSUES="${ISSUES}  🔴 Name matches ClawHavoc blocklist\n"; HAS_CRITICAL=1 ;;
   esac
+
+  # Dangerous commands (config-driven: block / require_approval / warn)
+  if command -v python3 >/dev/null 2>&1; then
+    local dc_out dc_exit
+    dc_out=$(python3 "$SCRIPT_DIR/check-dangerous-commands.py" "$d" 2>/dev/null)
+    dc_exit=$?
+    if [[ $dc_exit -eq 1 ]]; then
+      ISSUES="${ISSUES}  🔴 Dangerous commands (block)\n$(echo "$dc_out" | sed 's/^/    /')\n"
+      HAS_CRITICAL=1
+    elif [[ $dc_exit -eq 2 ]]; then
+      ISSUES="${ISSUES}  🟠 Dangerous commands (require approval/warn)\n$(echo "$dc_out" | sed 's/^/    /')\n"
+    fi
+  fi
 
   if [ -z "$ISSUES" ]; then
     echo "✅ $n — clean"; SAFE=$((SAFE+1))
