@@ -65,7 +65,60 @@ cat >>"$OUT_DIR/decision.md" <<EOF
 
 EOF
 
-# 4) IOC check (C2 servers, malicious names, infostealer targets)
+# 4) Semgrep — semantic static analysis (catches obfuscated attacks regex misses)
+semgrep_exit=0
+if command -v semgrep >/dev/null 2>&1; then
+  {
+    echo "## Semgrep Semantic Analysis";
+    echo "Target: $TARGET_DIR";
+    echo;
+  } >> "$OUT_DIR/l1_findings.md"
+
+  set +e
+  semgrep scan \
+    --config p/security-audit \
+    --config p/python \
+    --config p/javascript \
+    --json \
+    --quiet \
+    "$TARGET_DIR" >"$OUT_DIR/semgrep.json" 2>/dev/null
+  semgrep_exit=$?
+  set -e
+
+  if [[ -s "$OUT_DIR/semgrep.json" ]]; then
+    error_count=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$OUT_DIR/semgrep.json'))
+    errors = [r for r in d.get('results', []) if r.get('extra', {}).get('severity') in ('ERROR', 'WARNING')]
+    print(len(errors))
+except Exception:
+    print(0)
+" 2>/dev/null || echo 0)
+
+    if [[ "$error_count" -gt 0 ]]; then
+      echo "SEMGREP RESULT: WARN — $error_count finding(s) (see semgrep.json)" >>"$OUT_DIR/l1_findings.md"
+      semgrep_label="WARN"
+      [[ $semgrep_exit -eq 0 ]] && semgrep_exit=2
+    else
+      echo "SEMGREP RESULT: OK" >>"$OUT_DIR/l1_findings.md"
+      semgrep_label="OK"
+    fi
+  else
+    echo "SEMGREP RESULT: OK" >>"$OUT_DIR/l1_findings.md"
+    semgrep_label="OK"
+  fi
+else
+  semgrep_label="SKIP"
+fi
+
+{
+  echo "- semgrep exit: $semgrep_exit (0=ok, 2=warn)"
+  echo "- semgrep result: $semgrep_label"
+  echo
+} >> "$OUT_DIR/decision.md"
+
+# 5) IOC check (C2 servers, malicious names, infostealer targets)
 ioc_exit=0
 if [[ -n "$SECURECLAW_SCRIPTS" ]] && command -v python3 >/dev/null 2>&1; then
   {
