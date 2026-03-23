@@ -80,6 +80,17 @@ scan_dir() {
     elif [[ $dc_exit -eq 2 ]]; then
       ISSUES="${ISSUES}  🟠 Dangerous commands (require approval/warn)\n$(echo "$dc_out" | sed 's/^/    /')\n"
     fi
+
+    # Supply chain IOC check (C2 servers, malicious names, infostealer targets)
+    local ioc_out ioc_exit
+    ioc_out=$(python3 "$SCRIPT_DIR/check-ioc.py" "$d" "$n" 2>/dev/null)
+    ioc_exit=$?
+    if [[ $ioc_exit -eq 1 ]]; then
+      ISSUES="${ISSUES}  🔴 IOC match (block)\n$(echo "$ioc_out" | sed 's/^/    /')\n"
+      HAS_CRITICAL=1
+    elif [[ $ioc_exit -eq 2 ]]; then
+      ISSUES="${ISSUES}  🟠 IOC suspicious pattern\n$(echo "$ioc_out" | sed 's/^/    /')\n"
+    fi
   fi
 
   if [ -z "$ISSUES" ]; then

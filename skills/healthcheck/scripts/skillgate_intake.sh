@@ -16,6 +16,7 @@ VERSION="${3:?version required}"
 OUT_DIR="${4:?out_dir required}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SECURECLAW_SCRIPTS="$(cd "$ROOT_DIR/../../secureclaw/skill/scripts" 2>/dev/null && pwd)" || SECURECLAW_SCRIPTS=""
 
 mkdir -p "$OUT_DIR"
 
@@ -64,8 +65,49 @@ cat >>"$OUT_DIR/decision.md" <<EOF
 
 EOF
 
+# 4) IOC check (C2 servers, malicious names, infostealer targets)
+ioc_exit=0
+if [[ -n "$SECURECLAW_SCRIPTS" ]] && command -v python3 >/dev/null 2>&1; then
+  {
+    echo "## Supply Chain IOC Check";
+    echo "Target: $TARGET_DIR";
+    echo;
+  } >> "$OUT_DIR/l1_findings.md"
+
+  set +e
+  python3 "$SECURECLAW_SCRIPTS/check-ioc.py" "$TARGET_DIR" "$SKILL_NAME" \
+    >>"$OUT_DIR/l1_findings.md" 2>&1
+  ioc_exit=$?
+  set -e
+
+  if [[ $ioc_exit -eq 0 ]]; then
+    echo "IOC RESULT: OK" >>"$OUT_DIR/l1_findings.md"
+    ioc_label="OK"
+  elif [[ $ioc_exit -eq 1 ]]; then
+    echo "IOC RESULT: BLOCKED — IOC match found" >>"$OUT_DIR/l1_findings.md"
+    ioc_label="BLOCKED"
+  else
+    echo "IOC RESULT: WARN — suspicious pattern found" >>"$OUT_DIR/l1_findings.md"
+    ioc_label="WARN"
+  fi
+else
+  ioc_label="SKIP"
+fi
+
+# Append IOC signal to decision.md
+{
+  echo "- ioc_check exit: $ioc_exit (0=ok, 1=blocked, 2=warn)"
+  echo "- ioc_check result: $ioc_label"
+  echo
+} >> "$OUT_DIR/decision.md"
+
 if [[ $policy_exit -eq 1 ]]; then
   echo "❌ SkillGate intake BLOCKED: block-level policy violations in $SKILL_NAME. Report at $OUT_DIR"
+  exit 1
+fi
+
+if [[ $ioc_exit -eq 1 ]]; then
+  echo "❌ SkillGate intake BLOCKED: IOC match in $SKILL_NAME. Report at $OUT_DIR"
   exit 1
 fi
 

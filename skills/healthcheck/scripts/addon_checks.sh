@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SkillGate L1 addon checks (best-effort): ClamAV, YARA, SBOM/Vuln
+# SkillGate L1 addon checks: ClamAV, YARA, SBOM/Vuln
+# Exit codes:
+#   0 = all tools clean (or skipped)
+#   1 = ClamAV or YARA hit detected
 # Usage:
 #   ./addon_checks.sh <target_dir> <out_dir>
 
@@ -19,52 +22,50 @@ report "Target: $TARGET_DIR"
 report "Time: $(date -u +%FT%TZ)"
 report ""
 
+HIT=0
+
 # 1) ClamAV
+report "## ClamAV"
 if command -v clamscan >/dev/null 2>&1; then
-  report "## ClamAV"
-  # --infected prints only infected files; do not fail the whole script on non-zero (clam uses 1 for infected)
   set +e
   clamscan -r --infected --no-summary "$TARGET_DIR" >"$OUT_DIR/clamav.txt" 2>&1
-  code=$?
+  clamav_exit=$?
   set -e
-  if [[ $code -eq 0 ]]; then
+  if [[ $clamav_exit -eq 0 ]]; then
     report "ClamAV: OK (no hits)"
-  elif [[ $code -eq 1 ]]; then
-    report "ClamAV: HIT (see clamav.txt)"
+  elif [[ $clamav_exit -eq 1 ]]; then
+    report "ClamAV: HIT — malware detected (see clamav.txt)"
+    HIT=1
   else
-    report "ClamAV: ERROR (exit=$code; see clamav.txt)"
+    report "ClamAV: ERROR (exit=$clamav_exit; see clamav.txt)"
   fi
-  report ""
 else
-  report "## ClamAV"
   report "ClamAV: SKIP (clamscan not installed)"
-  report ""
 fi
+report ""
 
 # 2) YARA
+report "## YARA"
 if command -v yara >/dev/null 2>&1; then
-  report "## YARA"
-  # Expect user to provide rules; default none.
   RULES_DIR="${YARA_RULES_DIR:-}"
   if [[ -n "$RULES_DIR" && -d "$RULES_DIR" ]]; then
     set +e
     yara -r "$RULES_DIR" "$TARGET_DIR" >"$OUT_DIR/yara.txt" 2>&1
-    code=$?
+    yara_exit=$?
     set -e
-    if [[ $code -eq 0 ]]; then
+    if [[ $yara_exit -eq 0 ]]; then
       report "YARA: OK (no hits)"
     else
-      report "YARA: HIT/ERROR (exit=$code; see yara.txt)"
+      report "YARA: HIT — rule matched (exit=$yara_exit; see yara.txt)"
+      HIT=1
     fi
   else
     report "YARA: SKIP (set YARA_RULES_DIR to a directory of .yar rules)"
   fi
-  report ""
 else
-  report "## YARA"
   report "YARA: SKIP (yara not installed)"
-  report ""
 fi
+report ""
 
 # 3) SBOM + Vuln DB
 report "## SBOM/Vuln"
@@ -87,3 +88,8 @@ fi
 
 report ""
 report "Done."
+
+if [[ $HIT -eq 1 ]]; then
+  echo "❌ addon_checks: malware/YARA hit detected — see $OUT_DIR/addon_checks.log"
+  exit 1
+fi

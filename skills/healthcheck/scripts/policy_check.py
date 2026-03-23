@@ -27,8 +27,14 @@ BLOCK_PATTERNS = {
 }
 
 # warn level — matches policy.yaml rules: webhook_or_url, install_hooks
+# webhook_or_url: narrowed to execution contexts only (not bare URLs in docs/comments)
 WARN_PATTERNS = {
-    "webhook_or_url": re.compile(r"https?://|webhook", re.I),
+    "webhook_or_url": re.compile(
+        r'(fetch|axios|requests\.get|requests\.post|urllib)\s*\(\s*["\']https?://'
+        r'|https?://[^\s"\']*webhook'
+        r'|\bwebhook\b',
+        re.I,
+    ),
     "install_hooks": re.compile(r"postinstall|preinstall", re.I),
 }
 
