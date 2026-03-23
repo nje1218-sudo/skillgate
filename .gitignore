@@ -22,3 +22,12 @@ tmp/
 
 # Node
 node_modules/
+
+# System skills (not part of SkillGate project)
+skills/openclaw-skill-vetter/
+skills/tavily-search/
+skills/self-improving/
+skills/proactive-agent-lite/
+skills/find-skills/
+skills/summarize/
+skills_staging/
