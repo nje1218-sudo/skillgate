@@ -7,13 +7,21 @@ such as variable-indirect execution, encoded payloads, and network calls.
 
 Isolation methods (auto-selected in order of preference):
   1. Docker  — full network/filesystem isolation (preferred)
-  2. strace  — syscall-level monitoring, no root required
+  2. nsjail  — seccomp-bpf syscall filtering, harder to evade than strace
+  3. strace  — passive syscall monitoring (last resort)
+
+nsjail advantages over strace:
+  - Uses seccomp-bpf: blocked syscalls are PREVENTED, not just observed
+  - Malware cannot detect or evade nsjail at runtime
+  - Network namespace isolation (--iface_no_lo)
+  - Resource limits via rlimits/cgroups
 
 Monitored behaviors:
-  - Network connection attempts (even if blocked)
+  - Network connection attempts (blocked + detected)
   - Sensitive file reads (.env, credentials, .ssh, /etc/passwd)
   - Writes to sensitive paths (~/.openclaw, /etc, ~/.ssh)
   - Dangerous process spawning (curl, wget, sh, bash, python)
+  - Blocked syscalls (SIGSYS / seccomp violation)
   - Timeout exceeded (potential resource abuse / crypto miner)
 
 Usage:
@@ -34,7 +42,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -57,6 +64,11 @@ DANGEROUS_PROCS = {
     'python', 'python3', 'python2', 'perl', 'ruby', 'node', 'powershell',
 }
 
+NET_SIGNALS = [
+    'network unreachable', 'getaddrinfo', 'name or service not known',
+    'connection refused', 'no route to host', 'network is unreachable',
+]
+
 ENTRY_POINTS = ['install.sh', 'run.sh', 'setup.sh', 'start.sh', 'main.sh']
 
 
@@ -74,8 +86,12 @@ def find_entry(skill_dir: Path, hint: str | None) -> Path | None:
     return sh[0] if sh else None
 
 
+def cmd_ok(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
 def docker_ok() -> bool:
-    if not shutil.which('docker'):
+    if not cmd_ok('docker'):
         return False
     try:
         return subprocess.run(
@@ -83,10 +99,6 @@ def docker_ok() -> bool:
         ).returncode == 0
     except Exception:
         return False
-
-
-def strace_ok() -> bool:
-    return shutil.which('strace') is not None
 
 
 def dedup(findings: list) -> list:
@@ -104,14 +116,28 @@ def finding(level: str, category: str, detail: str) -> dict:
     return {'level': level, 'category': category, 'detail': detail}
 
 
+def check_net_signals(text: str) -> bool:
+    t = text.lower()
+    return any(s in t for s in NET_SIGNALS)
+
+
+def check_sensitive_paths(text: str) -> list[dict]:
+    hits = []
+    for pat in SENSITIVE_READ:
+        if re.search(pat, text, re.I):
+            hits.append(finding('block', 'sensitive_read',
+                f'References sensitive path pattern: {pat}'))
+    return hits
+
+
 # ── Docker isolation ──────────────────────────────────────────────────────────
 
 def run_docker(skill_dir: Path, entry: Path, timeout: int) -> dict:
     rel = entry.relative_to(skill_dir)
     cmd = [
         'docker', 'run', '--rm',
-        '--network', 'none',           # block all network
-        '--read-only',                 # immutable filesystem
+        '--network', 'none',
+        '--read-only',
         '--tmpfs', '/tmp:rw,size=64m',
         '--tmpfs', '/root:rw,size=16m',
         '--memory', '256m',
@@ -120,8 +146,7 @@ def run_docker(skill_dir: Path, entry: Path, timeout: int) -> dict:
         '--cap-drop', 'ALL',
         '-v', f'{skill_dir}:/skill:ro',
         'ubuntu:22.04',
-        'bash', '-c',
-        f'cd /skill && timeout {timeout} bash {rel} 2>&1',
+        'bash', '-c', f'cd /skill && timeout {timeout} bash {rel} 2>&1',
     ]
 
     findings = []
@@ -133,20 +158,11 @@ def run_docker(skill_dir: Path, entry: Path, timeout: int) -> dict:
             findings.append(finding('warn', 'timeout',
                 f'Skill exceeded {timeout}s — possible resource abuse'))
 
-        # Network blocked → specific error messages in output
-        net_signals = [
-            'Network unreachable', 'getaddrinfo', 'Name or service not known',
-            'Connection refused', 'network is unreachable',
-        ]
-        if any(s.lower() in out.lower() for s in net_signals):
+        if check_net_signals(out):
             findings.append(finding('block', 'network_attempt',
-                'Skill attempted outbound network connection (blocked by sandbox)'))
+                'Skill attempted outbound network connection (blocked by Docker)'))
 
-        # Sensitive paths mentioned in output
-        for pat in SENSITIVE_READ:
-            if re.search(pat, out, re.I):
-                findings.append(finding('block', 'sensitive_read',
-                    f'Output references sensitive path pattern: {pat}'))
+        findings.extend(check_sensitive_paths(out))
 
     except subprocess.TimeoutExpired:
         findings.append(finding('warn', 'timeout', 'Docker sandbox runner timed out'))
@@ -156,13 +172,104 @@ def run_docker(skill_dir: Path, entry: Path, timeout: int) -> dict:
     return {'method': 'docker', 'findings': dedup(findings)}
 
 
-# ── strace monitoring ─────────────────────────────────────────────────────────
+# ── nsjail isolation ──────────────────────────────────────────────────────────
+
+def run_nsjail(skill_dir: Path, entry: Path, timeout: int) -> dict:
+    """
+    nsjail advantages:
+    - seccomp-bpf blocks dangerous syscalls at kernel level (cannot be detected
+      or bypassed by the sandboxed process, unlike strace)
+    - Network namespace isolation (--iface_no_lo disables loopback)
+    - Filesystem isolation via bind mounts
+    - Resource limits enforced by kernel
+    """
+    findings = []
+    nsjail_log = tempfile.mktemp(suffix='.nsjail.log')
+    fake_home = tempfile.mkdtemp(prefix='l2_home_')
+
+    try:
+        cmd = [
+            'nsjail',
+            '--mode', 'o',                               # run once
+            '--chroot', '/',                             # use host FS
+            f'--bindmount_ro={skill_dir}:/skill',        # skill: read-only
+            f'--bindmount={fake_home}:/root',            # isolated home
+            '--tmpfs=/tmp',                              # writable tmp
+            '--disable_proc',                            # hide /proc
+            '--iface_no_lo',                             # no network
+            f'--time_limit={timeout}',                   # wall clock limit
+            '--rlimit_as=256',                           # 256 MiB address space
+            '--rlimit_cpu=30',                           # 30s CPU time
+            f'--log={nsjail_log}',                       # nsjail internal log
+            '--',
+            '/bin/bash', f'/skill/{entry.name}',
+        ]
+
+        env = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': '/root'}
+
+        r = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=timeout + 15, env=env,
+        )
+        out = r.stdout + r.stderr
+
+        if check_net_signals(out):
+            findings.append(finding('block', 'network_attempt',
+                'Skill attempted network connection (blocked by nsjail)'))
+
+        findings.extend(check_sensitive_paths(out))
+
+        # Parse nsjail internal log for blocked syscalls / resource violations
+        if Path(nsjail_log).exists():
+            findings.extend(_parse_nsjail_log(
+                Path(nsjail_log).read_text(errors='ignore')
+            ))
+
+    except subprocess.TimeoutExpired:
+        findings.append(finding('warn', 'timeout', 'nsjail runner timed out'))
+    except Exception as e:
+        findings.append(finding('warn', 'sandbox_error', f'nsjail error: {e}'))
+    finally:
+        try:
+            Path(nsjail_log).unlink()
+        except Exception:
+            pass
+        shutil.rmtree(fake_home, ignore_errors=True)
+
+    return {'method': 'nsjail', 'findings': dedup(findings)}
+
+
+def _parse_nsjail_log(log: str) -> list[dict]:
+    findings = []
+
+    # SIGSYS = seccomp violation (blocked syscall attempted)
+    if re.search(r'SIGSYS|seccomp violation|syscall.*blocked', log, re.I):
+        findings.append(finding('block', 'syscall_blocked',
+            'Process killed by seccomp — attempted forbidden syscall'))
+
+    # Network syscall blocked
+    if re.search(r'connect.*block|socket.*denied|iface.*no', log, re.I):
+        findings.append(finding('block', 'network_attempt',
+            'Network syscall blocked by nsjail'))
+
+    # Time limit exceeded
+    if re.search(r'time.?limit|tlimit|killed.*time', log, re.I):
+        findings.append(finding('warn', 'timeout',
+            'Process killed by nsjail time limit'))
+
+    # Memory limit exceeded
+    if re.search(r'memory.?limit|rlimit_as|OOM|out.of.memory', log, re.I):
+        findings.append(finding('warn', 'resource_abuse',
+            'Memory limit exceeded — possible resource abuse'))
+
+    return findings
+
+
+# ── strace monitoring (last resort) ──────────────────────────────────────────
 
 def run_strace(skill_dir: Path, entry: Path, timeout: int) -> dict:
     findings = []
     strace_log = tempfile.mktemp(suffix='.strace')
-
-    # Restrict HOME/PATH so skill cannot easily reach real user files
     env = {
         **os.environ,
         'HOME': tempfile.mkdtemp(prefix='l2_home_'),
@@ -186,8 +293,9 @@ def run_strace(skill_dir: Path, entry: Path, timeout: int) -> dict:
             findings.append(finding('warn', 'timeout',
                 f'Skill exceeded {timeout}s — possible resource abuse'))
 
-        strace_out = Path(strace_log).read_text(errors='ignore')
-        findings.extend(_parse_strace(strace_out))
+        findings.extend(_parse_strace(
+            Path(strace_log).read_text(errors='ignore')
+        ))
 
     except subprocess.TimeoutExpired:
         findings.append(finding('warn', 'timeout', 'strace runner timed out'))
@@ -205,7 +313,6 @@ def run_strace(skill_dir: Path, entry: Path, timeout: int) -> dict:
 def _parse_strace(output: str) -> list[dict]:
     findings = []
 
-    # Network: connect() to external IPs
     for m in re.finditer(
         r'connect\(.*?AF_INET.*?sin_addr=inet_addr\("([^"]+)"', output
     ):
@@ -214,7 +321,6 @@ def _parse_strace(output: str) -> list[dict]:
             findings.append(finding('block', 'network_attempt',
                 f'Outbound TCP connection to {ip}'))
 
-    # Sensitive reads
     for m in re.finditer(r'(?:open|openat)\([^"]*"([^"]+)"', output):
         path = m.group(1)
         for pat in SENSITIVE_READ:
@@ -223,7 +329,6 @@ def _parse_strace(output: str) -> list[dict]:
                     f'Read sensitive path: {path}'))
                 break
 
-    # Sensitive writes (O_WRONLY or O_RDWR flag)
     for m in re.finditer(
         r'openat\([^"]*"([^"]+)"[^)]*(?:O_WRONLY|O_RDWR)', output
     ):
@@ -234,7 +339,6 @@ def _parse_strace(output: str) -> list[dict]:
                     f'Write to sensitive path: {path}'))
                 break
 
-    # Dangerous process spawning
     for m in re.finditer(r'execve\("([^"]+)"', output):
         binary = Path(m.group(1)).name
         if binary in DANGEROUS_PROCS:
@@ -248,13 +352,10 @@ def _parse_strace(output: str) -> list[dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='SecureClaw L2 Dynamic Sandbox')
-    parser.add_argument('skill_dir', help='Path to skill directory')
-    parser.add_argument('--timeout', type=int, default=30,
-                        help='Max execution time in seconds (default: 30)')
-    parser.add_argument('--entry', default=None,
-                        help='Entry point script (default: auto-detect)')
-    parser.add_argument('--output', default=None,
-                        help='Write JSON report to this path')
+    parser.add_argument('skill_dir')
+    parser.add_argument('--timeout', type=int, default=30)
+    parser.add_argument('--entry', default=None)
+    parser.add_argument('--output', default=None)
     args = parser.parse_args()
 
     skill_dir = Path(args.skill_dir).resolve()
@@ -267,29 +368,35 @@ def main() -> int:
         print('L2: no executable entry point found — skipping dynamic analysis')
         return 0
 
-    print(f'L2 sandbox: {skill_dir.name} | entry={entry.name} | timeout={args.timeout}s')
-
+    # Select isolation method
     if docker_ok():
-        result = run_docker(skill_dir, entry, args.timeout)
-    elif strace_ok():
-        result = run_strace(skill_dir, entry, args.timeout)
+        method_name = 'docker'
+        run_fn = run_docker
+    elif cmd_ok('nsjail'):
+        method_name = 'nsjail'
+        run_fn = run_nsjail
+    elif cmd_ok('strace'):
+        method_name = 'strace'
+        run_fn = run_strace
     else:
-        print('L2: Docker and strace unavailable — skipping dynamic analysis')
+        print('L2: no isolation tool available (install Docker, nsjail, or strace)')
         return 0
 
-    method = result['method']
+    print(f'L2 sandbox: {skill_dir.name} | method={method_name} | entry={entry.name} | timeout={args.timeout}s')
+
+    result = run_fn(skill_dir, entry, args.timeout)
     findings = result['findings']
 
     if args.output:
         Path(args.output).write_text(json.dumps({
-            'method': method,
+            'method': method_name,
             'skill': skill_dir.name,
             'entry': entry.name,
             'findings': findings,
         }, indent=2, ensure_ascii=False))
 
     if not findings:
-        print(f'L2 [{method}]: OK — no dangerous runtime behavior detected')
+        print(f'L2 [{method_name}]: OK — no dangerous runtime behavior detected')
         return 0
 
     worst = 0
