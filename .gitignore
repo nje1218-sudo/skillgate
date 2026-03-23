@@ -1,0 +1,21 @@
+# OpenClaw
+.openclaw/
+credentials/
+tokens/
+*.log
+
+# Memory (personal)
+memory/
+MEMORY.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+*.key
+*.pem
+ghp_*
+
+# Temp
+tmp/

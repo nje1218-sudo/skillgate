@@ -1,0 +1,55 @@
+# SkillGate Policy-as-Code (v0)
+# Levels: block | warn | info
+# Notes:
+# - This is a starter policy. Treat as guidance; still run L1 skill-vetting + L2 SecureClaw.
+# - Prefer explicit allowlists over broad exceptions.
+
+policy_version: 0
+
+default_action: warn
+
+rules:
+  - id: network_exec_keywords
+    level: block
+    description: "Detects common direct network execution tools."
+    match:
+      type: regex_any
+      patterns:
+        - "\\b(curl|wget|nc|powershell)\\b"
+        - "bash\\s+-c"
+
+  - id: decode_and_run
+    level: block
+    description: "Detects decode-and-run / eval patterns."
+    match:
+      type: regex_any
+      patterns:
+        - "base64\\s+(-d|--decode)"
+        - "eval\\s*\\("
+
+  - id: webhook_or_url
+    level: warn
+    description: "URLs/webhook strings present; requires manual review + allowlist if needed."
+    match:
+      type: regex_any
+      patterns:
+        - "https?://"
+        - "webhook"
+
+  - id: install_hooks
+    level: warn
+    description: "Install hooks found (postinstall/preinstall)."
+    match:
+      type: regex_any
+      patterns:
+        - "postinstall"
+        - "preinstall"
+
+  - id: secrets_path_reference
+    level: block
+    description: "Direct references to secrets/ or ssh paths."
+    match:
+      type: regex_any
+      patterns:
+        - "secrets/"
+        - "\\.ssh/"

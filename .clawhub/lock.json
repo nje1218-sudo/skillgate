@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "openclaw-skill-vetter": {
+      "version": "1.0.0",
+      "installedAt": 1772781827661
+    },
+    "tavily-search": {
+      "version": "1.0.0",
+      "installedAt": 1772781833988
+    },
+    "self-improving": {
+      "version": "1.2.9",
+      "installedAt": 1772781837924
+    },
+    "proactive-agent-lite": {
+      "version": "1.0.0",
+      "installedAt": 1772781841545
+    },
+    "find-skills": {
+      "version": "0.1.0",
+      "installedAt": 1772781845927
+    },
+    "summarize": {
+      "version": "1.0.0",
+      "installedAt": 1772781849398
+    }
+  }
+}

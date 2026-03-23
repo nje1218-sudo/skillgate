@@ -1,0 +1,22 @@
+name: SkillGate Intake (PR)
+
+on:
+  pull_request:
+
+jobs:
+  skillgate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run SkillGate intake (best-effort)
+        run: |
+          chmod +x skills/healthcheck/scripts/*.sh
+          mkdir -p reports
+          skills/healthcheck/scripts/skillgate_intake.sh . repo-scan pr-${{ github.event.number }} reports/skillgate-pack
+
+      - name: Upload report pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: skillgate-pack
+          path: reports/skillgate-pack
