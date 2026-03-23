@@ -17,46 +17,49 @@ SCAN_DIR="${1:-$OPENCLAW_DIR/skills}"
 
 echo "🔒 SecureClaw — Skill Supply Chain Scan"
 echo "========================================"
-SAFE=0; SUS=0; T=0; SKIPPED=0
+SAFE=0; SUS=0; T=0; SKIPPED=0; CRITICAL=0
 
 scan_dir() {
   local d="$1" n="$2"
   T=$((T+1)); local ISSUES=""
 
-  # Remote code execution
+  local HAS_CRITICAL=0
+
+  # Remote code execution (critical)
   grep -rl 'curl.*|.*sh\|wget.*|.*bash\|curl.*|.*python' "$d" 2>/dev/null | head -1 | grep -q . \
-    && ISSUES="${ISSUES}  🔴 Remote code execution\n" || true
+    && ISSUES="${ISSUES}  🔴 Remote code execution\n" && HAS_CRITICAL=1 || true
 
-  # Dynamic execution
+  # Dynamic execution (critical)
   grep -rl 'eval(\|exec(\|Function(\|subprocess\.\|os\.system' "$d" 2>/dev/null | head -1 | grep -q . \
-    && ISSUES="${ISSUES}  🔴 Dynamic code execution\n" || true
+    && ISSUES="${ISSUES}  🔴 Dynamic code execution\n" && HAS_CRITICAL=1 || true
 
-  # Obfuscation
+  # Obfuscation (warning)
   grep -rl 'atob(\|btoa(\|String\.fromCharCode\|\\x[0-9a-f]' "$d" 2>/dev/null | head -1 | grep -q . \
     && ISSUES="${ISSUES}  🟠 Obfuscated code\n" || true
 
-  # Credential access
+  # Credential access (warning)
   grep -rl 'process\.env\|\.env\|api_key\|apiKey' "$d" 2>/dev/null | grep -v node_modules | head -1 | grep -q . \
     && ISSUES="${ISSUES}  🟠 Credential access\n" || true
 
-  # Config modification
+  # Config modification (warning)
   grep -rl 'SOUL\.md\|IDENTITY\.md\|TOOLS\.md\|openclaw\.json' "$d" 2>/dev/null | head -1 | grep -q . \
     && ISSUES="${ISSUES}  🟠 Config/identity modification\n" || true
 
-  # ClawHavoc patterns
+  # ClawHavoc patterns (critical)
   grep -rl 'osascript.*display\|xattr.*quarantine\|ClickFix\|webhook\.site' "$d" 2>/dev/null | head -1 | grep -q . \
-    && ISSUES="${ISSUES}  🔴 ClawHavoc campaign pattern\n" || true
+    && ISSUES="${ISSUES}  🔴 ClawHavoc campaign pattern\n" && HAS_CRITICAL=1 || true
 
-  # ClawHavoc name patterns
+  # ClawHavoc name patterns (critical)
   case "$n" in
     *solana-wallet*|*phantom-tracker*|*polymarket-*|*better-polymarket*|*auto-updater*|*clawhub[0-9]*|*clawhubb*|*cllawhub*)
-      ISSUES="${ISSUES}  🔴 Name matches ClawHavoc blocklist\n" ;;
+      ISSUES="${ISSUES}  🔴 Name matches ClawHavoc blocklist\n"; HAS_CRITICAL=1 ;;
   esac
 
   if [ -z "$ISSUES" ]; then
     echo "✅ $n — clean"; SAFE=$((SAFE+1))
   else
     echo "⚠️  $n:"; echo -e "$ISSUES"; SUS=$((SUS+1))
+    [ "$HAS_CRITICAL" -eq 1 ] && CRITICAL=$((CRITICAL+1))
   fi
 }
 
@@ -73,7 +76,11 @@ if [ $T -eq 0 ] && [ $SKIPPED -eq 0 ] && [ -d "$SCAN_DIR" ]; then
 fi
 
 echo ""
-echo "📊 Scanned $T: $SAFE clean, $SUS suspicious"
+echo "📊 Scanned $T: $SAFE clean, $SUS suspicious ($CRITICAL critical)"
 if [ $SUS -gt 0 ]; then
   echo "⚠️  Review suspicious skills. Remove any you didn't install yourself."
+fi
+if [ $CRITICAL -gt 0 ]; then
+  echo "❌ $CRITICAL critical issue(s) found — block installation."
+  exit 1
 fi
