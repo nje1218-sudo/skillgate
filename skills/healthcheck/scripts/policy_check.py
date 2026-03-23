@@ -9,7 +9,8 @@ Usage:
 
 Exit codes:
   0 = ok
-  2 = policy violation found
+  1 = block-level violation (network_exec, decode_and_run, secrets_path_reference)
+  2 = warn-level violation only (webhook, install_hooks)
 """
 
 from __future__ import annotations
@@ -18,11 +19,17 @@ import re
 import sys
 from pathlib import Path
 
-PATTERNS = {
+# block level — matches policy.yaml rules: network_exec_keywords, decode_and_run, secrets_path_reference
+BLOCK_PATTERNS = {
     "network_exec": re.compile(r"\b(curl|wget|nc|powershell)\b|bash\s+-c", re.I),
-    "decode_and_run": re.compile(r"base64\s+(-d|--decode)|decode\s*\(|eval\s*\(", re.I),
-    "webhook": re.compile(r"https?://|webhook", re.I),
-    "postinstall": re.compile(r"postinstall|preinstall", re.I),
+    "decode_and_run": re.compile(r"base64\s+(-d|--decode)|eval\s*\(", re.I),
+    "secrets_path_reference": re.compile(r"secrets/|\.ssh/", re.I),
+}
+
+# warn level — matches policy.yaml rules: webhook_or_url, install_hooks
+WARN_PATTERNS = {
+    "webhook_or_url": re.compile(r"https?://|webhook", re.I),
+    "install_hooks": re.compile(r"postinstall|preinstall", re.I),
 }
 
 SKIP_DIRS = {".git", "node_modules", "dist", "build", "__pycache__"}
@@ -46,23 +53,40 @@ def main() -> int:
         print(f"Not found: {root}")
         return 2
 
-    violations = []
+    block_violations: list[tuple[str, str]] = []
+    warn_violations: list[tuple[str, str]] = []
+
     for f in iter_files(root):
         try:
             text = f.read_text(errors="ignore")
         except Exception:
             continue
 
-        for key, rx in PATTERNS.items():
+        for key, rx in BLOCK_PATTERNS.items():
             if rx.search(text):
-                violations.append((key, str(f)))
+                block_violations.append((key, str(f)))
 
-    if violations:
-        print("POLICY_VIOLATIONS:")
-        for key, f in violations[:200]:
+        for key, rx in WARN_PATTERNS.items():
+            if rx.search(text):
+                warn_violations.append((key, str(f)))
+
+    if block_violations:
+        print("BLOCK_VIOLATIONS:")
+        for key, f in block_violations[:200]:
             print(f"- {key}: {f}")
-        if len(violations) > 200:
-            print(f"... and {len(violations)-200} more")
+        if len(block_violations) > 200:
+            print(f"... and {len(block_violations)-200} more")
+
+    if warn_violations:
+        print("WARN_VIOLATIONS:")
+        for key, f in warn_violations[:200]:
+            print(f"- {key}: {f}")
+        if len(warn_violations) > 200:
+            print(f"... and {len(warn_violations)-200} more")
+
+    if block_violations:
+        return 1
+    if warn_violations:
         return 2
 
     print("OK: no policy violations detected")
