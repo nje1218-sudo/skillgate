@@ -1,0 +1,29 @@
+# Personal workspace files
+AGENTS.md
+BOOTSTRAP.md
+HEARTBEAT.md
+IDENTITY.md
+MEMORY.md
+SOUL.md
+TOOLS.md
+USER.md
+memory/
+product/
+reports/
+bin/
+ci/
+dist/
+tmp/
+
+# OpenClaw
+.openclaw/
+.clawhub/
+.clawhub-cli/
+
+# OS
+.DS_Store
+
+# Secrets
+*.key
+*.pem
+ghp_*
