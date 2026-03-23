@@ -59,7 +59,8 @@ def main() -> int:
     for cat, meta in categories.items():
         compiled[cat] = {
             "action": meta.get("action", "warn"),
-            "patterns": [re.compile(p, re.I) for p in meta.get("patterns", [])],
+            # re.DOTALL lets . match newlines — catches patterns split across lines
+            "patterns": [re.compile(p, re.I | re.DOTALL) for p in meta.get("patterns", [])],
         }
 
     # (action, category, file_path)

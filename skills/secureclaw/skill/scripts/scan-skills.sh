@@ -27,29 +27,41 @@ scan_dir() {
 
   local HAS_CRITICAL=0
 
-  # Remote code execution (critical)
-  grep -rl 'curl.*|.*sh\|wget.*|.*bash\|curl.*|.*python' "$d" 2>/dev/null | head -1 | grep -q . \
-    && ISSUES="${ISSUES}  🔴 Remote code execution\n" && HAS_CRITICAL=1 || true
+  # Remote code execution — flexible whitespace, pipe to shell (critical)
+  grep -rlE '(curl|wget)\s*\|\s*(sh|bash|python[23]?|perl|ruby|node)\b' "$d" 2>/dev/null \
+    | head -1 | grep -q . && ISSUES="${ISSUES}  🔴 Remote code execution (pipe-to-shell)\n" && HAS_CRITICAL=1 || true
+
+  # Remote code execution — cross-line pipe (curl/wget ... newline ... | sh)
+  grep -rlzE '(curl|wget)[^\x00]{0,200}\|\s*(sh|bash|python[23]?|perl|ruby|node)\b' "$d" 2>/dev/null \
+    | head -1 | grep -q . && ISSUES="${ISSUES}  🔴 Remote code execution (cross-line pipe)\n" && HAS_CRITICAL=1 || true
+
+  # Equivalent remote execution tools (critical)
+  grep -rlE '\bsocat\b.+EXEC|\bnc\s+-[ce]\s|\bbusybox\s+(sh|ash|wget|curl)\b' "$d" 2>/dev/null \
+    | head -1 | grep -q . && ISSUES="${ISSUES}  🔴 Remote code execution (equivalent tool)\n" && HAS_CRITICAL=1 || true
+
+  # One-liner execution via scripting tools (critical)
+  grep -rlE '\bperl\s+-e\s|\bruby\s+-e\s|\bnode\s+-e\s|\bpython[23]?\s+-c\s' "$d" 2>/dev/null \
+    | head -1 | grep -q . && ISSUES="${ISSUES}  🔴 Remote code execution (one-liner)\n" && HAS_CRITICAL=1 || true
 
   # Dynamic execution (critical)
-  grep -rl 'eval(\|exec(\|Function(\|subprocess\.\|os\.system' "$d" 2>/dev/null | head -1 | grep -q . \
-    && ISSUES="${ISSUES}  🔴 Dynamic code execution\n" && HAS_CRITICAL=1 || true
+  grep -rlE '\beval\s*\(|\bexec\s*\(|\bFunction\s*\(|subprocess\.(call|run|Popen).*shell.*True|os\.(system|popen)\(' "$d" 2>/dev/null \
+    | head -1 | grep -q . && ISSUES="${ISSUES}  🔴 Dynamic code execution\n" && HAS_CRITICAL=1 || true
 
   # Obfuscation (warning)
-  grep -rl 'atob(\|btoa(\|String\.fromCharCode\|\\x[0-9a-f]' "$d" 2>/dev/null | head -1 | grep -q . \
-    && ISSUES="${ISSUES}  🟠 Obfuscated code\n" || true
+  grep -rlE '\batob\s*\(|\bbtoa\s*\(|String\.fromCharCode|\\\\x[0-9a-fA-F]{2}' "$d" 2>/dev/null \
+    | head -1 | grep -q . && ISSUES="${ISSUES}  🟠 Obfuscated code\n" || true
 
   # Credential access (warning)
-  grep -rl 'process\.env\|\.env\|api_key\|apiKey' "$d" 2>/dev/null | grep -v node_modules | head -1 | grep -q . \
-    && ISSUES="${ISSUES}  🟠 Credential access\n" || true
+  grep -rlE 'process\.env|\.env\b|api_key|apiKey|API_KEY' "$d" 2>/dev/null \
+    | grep -v node_modules | head -1 | grep -q . && ISSUES="${ISSUES}  🟠 Credential access\n" || true
 
   # Config modification (warning)
-  grep -rl 'SOUL\.md\|IDENTITY\.md\|TOOLS\.md\|openclaw\.json' "$d" 2>/dev/null | head -1 | grep -q . \
-    && ISSUES="${ISSUES}  🟠 Config/identity modification\n" || true
+  grep -rlE 'SOUL\.md|IDENTITY\.md|TOOLS\.md|openclaw\.json' "$d" 2>/dev/null \
+    | head -1 | grep -q . && ISSUES="${ISSUES}  🟠 Config/identity modification\n" || true
 
   # ClawHavoc patterns (critical)
-  grep -rl 'osascript.*display\|xattr.*quarantine\|ClickFix\|webhook\.site' "$d" 2>/dev/null | head -1 | grep -q . \
-    && ISSUES="${ISSUES}  🔴 ClawHavoc campaign pattern\n" && HAS_CRITICAL=1 || true
+  grep -rlE 'osascript.*display|xattr.*quarantine|ClickFix|webhook\.site' "$d" 2>/dev/null \
+    | head -1 | grep -q . && ISSUES="${ISSUES}  🔴 ClawHavoc campaign pattern\n" && HAS_CRITICAL=1 || true
 
   # ClawHavoc name patterns (critical)
   case "$n" in
