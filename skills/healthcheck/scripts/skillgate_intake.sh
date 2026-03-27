@@ -190,6 +190,37 @@ fi
   echo
 } >> "$OUT_DIR/decision.md"
 
+# 6) Signature verification (Cosign / SLSA)
+sig_exit=0
+SIG_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify_signatures.sh"
+if [[ -x "$SIG_SCRIPT" ]] && command -v cosign >/dev/null 2>&1; then
+  {
+    echo "## Signature Verification (Cosign/SLSA)";
+    echo "Target: $TARGET_DIR";
+    echo;
+  } >> "$OUT_DIR/l1_findings.md"
+
+  set +e
+  "$SIG_SCRIPT" "$TARGET_DIR" "$OUT_DIR"
+  sig_exit=$?
+  set -e
+
+  if [[ $sig_exit -eq 0 ]]; then
+    sig_label="OK"
+  else
+    echo "SIG RESULT: BLOCKED — signature verification failed" >>"$OUT_DIR/l1_findings.md"
+    sig_label="BLOCKED"
+  fi
+else
+  sig_label="SKIP"
+fi
+
+{
+  echo "- sig_verify exit: $sig_exit (0=ok, 1=blocked)"
+  echo "- sig_verify result: $sig_label"
+  echo
+} >> "$OUT_DIR/decision.md"
+
 # Block on any critical finding
 if [[ $policy_exit -eq 1 ]]; then
   echo "❌ SkillGate intake BLOCKED: block-level policy violations in $SKILL_NAME. Report at $OUT_DIR"
@@ -205,5 +236,22 @@ if [[ $l2_exit -eq 1 ]]; then
   echo "❌ SkillGate intake BLOCKED: dangerous runtime behavior in $SKILL_NAME. Report at $OUT_DIR"
   exit 1
 fi
+
+if [[ $sig_exit -eq 1 ]]; then
+  echo "❌ SkillGate intake BLOCKED: signature verification failed in $SKILL_NAME. Report at $OUT_DIR"
+  exit 1
+fi
+
+# 7) Audit log — append one line per intake run
+AUDIT_LOG="${ROOT_DIR}/../../reports/skillgate-audit.log"
+mkdir -p "$(dirname "$AUDIT_LOG")"
+TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+OVERALL_RESULT="OK"
+[[ $policy_exit -eq 1 || $ioc_exit -eq 1 || $l2_exit -eq 1 || $sig_exit -eq 1 ]] && OVERALL_RESULT="BLOCKED"
+[[ $policy_exit -eq 2 || $semgrep_exit -eq 2 || $ioc_exit -eq 2 || $l2_exit -eq 2 ]] && \
+  [[ "$OVERALL_RESULT" != "BLOCKED" ]] && OVERALL_RESULT="WARN"
+
+echo "${TIMESTAMP}  skill=${SKILL_NAME}  version=${VERSION}  result=${OVERALL_RESULT}  policy=${policy_label}  semgrep=${semgrep_label}  ioc=${ioc_label}  l2=${l2_label}  sig=${sig_label}  report=${OUT_DIR}" \
+  >> "$AUDIT_LOG"
 
 echo "OK: SkillGate intake generated at $OUT_DIR"

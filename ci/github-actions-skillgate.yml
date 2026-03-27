@@ -1,4 +1,4 @@
-name: SkillGate Intake (PR)
+name: SkillGate Security Gate (PR)
 
 on:
   pull_request:
@@ -6,17 +6,61 @@ on:
 jobs:
   skillgate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run SkillGate intake (best-effort)
+      - name: Determine scan target
+        id: target
+        run: |
+          # Scan skills_staging if it has content; otherwise scan the whole diff
+          if [ -d "skills_staging" ] && [ "$(ls -A skills_staging)" ]; then
+            echo "dir=skills_staging" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run SkillGate intake (security gate)
+        id: intake
         run: |
           chmod +x skills/healthcheck/scripts/*.sh
           mkdir -p reports
-          skills/healthcheck/scripts/skillgate_intake.sh . repo-scan pr-${{ github.event.number }} reports/skillgate-pack
+          skills/healthcheck/scripts/skillgate_intake.sh \
+            "${{ steps.target.outputs.dir }}" \
+            repo-scan \
+            pr-${{ github.event.number }} \
+            reports/skillgate-pack
+
+      - name: Enforce gate — fail PR on BLOCKED result
+        if: always()
+        run: |
+          BLOCKED=0
+          for f in reports/skillgate-pack/l1_findings.md reports/skillgate-pack/l2_summary.md; do
+            if [ -f "$f" ] && grep -qE "RESULT: BLOCKED" "$f"; then
+              BLOCKED=1
+              break
+            fi
+          done
+          if [ "$BLOCKED" -eq 1 ]; then
+            echo "❌ SkillGate BLOCKED: security violations found. See uploaded report pack." >&2
+            exit 1
+          fi
+          echo "✅ SkillGate gate passed."
 
       - name: Upload report pack
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: skillgate-pack
           path: reports/skillgate-pack
+
+      - name: Upload audit log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skillgate-audit-log
+          path: reports/skillgate-audit.log
+          if-no-files-found: ignore

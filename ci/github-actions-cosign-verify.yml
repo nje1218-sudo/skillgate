@@ -1,0 +1,113 @@
+name: Cosign / SLSA Provenance Verify (PR)
+
+on:
+  pull_request:
+
+jobs:
+  cosign-verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for keyless Cosign OIDC
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Verify skill archive signatures (Cosign)
+        id: cosign
+        run: |
+          FAIL=0
+          SKIP=0
+          PASS=0
+
+          # Scan for .tar.gz / .zip skill archives in skills_staging
+          while IFS= read -r archive; do
+            sig="${archive}.sig"
+            bundle="${archive}.cosign.bundle"
+
+            if [ -f "$bundle" ]; then
+              echo "Verifying bundle: $archive"
+              if cosign verify-blob \
+                --bundle "$bundle" \
+                --certificate-identity-regexp ".*" \
+                --certificate-oidc-issuer-regexp ".*" \
+                "$archive"; then
+                echo "  ✅ PASS: $archive"
+                PASS=$((PASS+1))
+              else
+                echo "  ❌ FAIL: $archive — invalid bundle signature" >&2
+                FAIL=$((FAIL+1))
+              fi
+            elif [ -f "$sig" ]; then
+              echo "Verifying detached sig: $archive"
+              if cosign verify-blob \
+                --signature "$sig" \
+                --certificate-identity-regexp ".*" \
+                --certificate-oidc-issuer-regexp ".*" \
+                "$archive"; then
+                echo "  ✅ PASS: $archive"
+                PASS=$((PASS+1))
+              else
+                echo "  ❌ FAIL: $archive — invalid signature" >&2
+                FAIL=$((FAIL+1))
+              fi
+            else
+              echo "  ⚠️  SKIP: $archive — no .sig or .cosign.bundle found"
+              SKIP=$((SKIP+1))
+            fi
+          done < <(find skills_staging -name "*.tar.gz" -o -name "*.zip" 2>/dev/null)
+
+          echo ""
+          echo "Cosign summary: PASS=$PASS  SKIP=$SKIP  FAIL=$FAIL"
+
+          if [ "$FAIL" -gt 0 ]; then
+            echo "❌ Cosign verification failed for $FAIL archive(s)." >&2
+            exit 1
+          fi
+
+      - name: Verify SLSA provenance (slsa-verifier)
+        id: slsa
+        run: |
+          if ! command -v slsa-verifier &>/dev/null; then
+            echo "slsa-verifier not available; installing..."
+            SLSA_VERSION="v2.7.0"
+            curl -sSfL \
+              "https://github.com/slsa-framework/slsa-verifier/releases/download/${SLSA_VERSION}/slsa-verifier-linux-amd64" \
+              -o /usr/local/bin/slsa-verifier
+            chmod +x /usr/local/bin/slsa-verifier
+          fi
+
+          FAIL=0
+          SKIP=0
+          PASS=0
+
+          while IFS= read -r archive; do
+            provenance="${archive}.intoto.jsonl"
+            if [ -f "$provenance" ]; then
+              echo "Verifying SLSA provenance: $archive"
+              if slsa-verifier verify-artifact \
+                --provenance-path "$provenance" \
+                --source-uri "github.com/${{ github.repository }}" \
+                "$archive"; then
+                echo "  ✅ PASS: $archive"
+                PASS=$((PASS+1))
+              else
+                echo "  ❌ FAIL: $archive — SLSA provenance rejected" >&2
+                FAIL=$((FAIL+1))
+              fi
+            else
+              echo "  ⚠️  SKIP: $archive — no .intoto.jsonl provenance"
+              SKIP=$((SKIP+1))
+            fi
+          done < <(find skills_staging -name "*.tar.gz" -o -name "*.zip" 2>/dev/null)
+
+          echo ""
+          echo "SLSA summary: PASS=$PASS  SKIP=$SKIP  FAIL=$FAIL"
+
+          if [ "$FAIL" -gt 0 ]; then
+            echo "❌ SLSA verification failed for $FAIL artifact(s)." >&2
+            exit 1
+          fi
