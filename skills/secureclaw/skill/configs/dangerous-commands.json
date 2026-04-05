@@ -5,10 +5,10 @@
     "remote_code_execution": {
       "severity": "critical", "action": "block",
       "patterns": [
-        "curl\\s*\\|\\s*(sh|bash|python|perl|ruby|node)",
-        "wget\\s*\\|\\s*(sh|bash|python|perl|ruby|node)",
-        "curl\\s*\\|",
-        "wget\\s*\\|",
+        "curl\\b[^\\n]*\\|\\s*(sh|bash|python|perl|ruby|node)",
+        "wget\\b[^\\n]*\\|\\s*(sh|bash|python|perl|ruby|node)",
+        "curl\\b[^\\n]*\\|",
+        "wget\\b[^\\n]*\\|",
         "socat\\s+.*EXEC",
         "nc\\s+-[ce]\\s",
         "busybox\\s+(sh|ash|wget|curl)",

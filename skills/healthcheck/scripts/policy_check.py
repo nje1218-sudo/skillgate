@@ -22,7 +22,7 @@ from pathlib import Path
 # block level — matches policy.yaml rules: network_exec_keywords, decode_and_run, secrets_path_reference
 BLOCK_PATTERNS = {
     "network_exec": re.compile(r"\b(curl|wget|nc|powershell)\b|bash\s+-c", re.I),
-    "decode_and_run": re.compile(r"base64\s+(-d|--decode)|eval\s*\(", re.I),
+    "decode_and_run": re.compile(r"base64\s+(-d|--decode)|eval\s*\(|exec\s*\(|\.b64decode\b", re.I),
     "secrets_path_reference": re.compile(r"secrets/|\.ssh/", re.I),
 }
 

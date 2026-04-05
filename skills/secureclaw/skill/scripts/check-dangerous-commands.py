@@ -81,7 +81,9 @@ def main() -> int:
         print("OK: no dangerous command patterns detected")
         return 0
 
+    # Priority: block > require_approval > warn (don't use max() — block=1 < require_approval=2)
     worst_exit = 0
+    has_block = any(a == "block" for a, _, _ in findings)
     for action in ("block", "require_approval", "warn"):
         hits = [(cat, fp) for a, cat, fp in findings if a == action]
         if not hits:
@@ -90,9 +92,10 @@ def main() -> int:
         print(f"{icon} [{action.upper()}]")
         for cat, fpath in hits:
             print(f"  - {cat}: {fpath}")
-        worst_exit = max(worst_exit, ACTION_EXIT[action])
 
-    return worst_exit
+    if has_block:
+        return 1
+    return 2  # require_approval or warn
 
 
 if __name__ == "__main__":
