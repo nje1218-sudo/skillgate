@@ -40,29 +40,41 @@ TIMEOUT = 15
 
 # ── Curated rule sources ───────────────────────────────────────────────────────
 # Each entry: (display_name, raw_url)
-# We cherry-pick files that are most relevant to supply-chain / code injection.
+# Cherry-picked files most relevant to supply-chain attacks and code injection.
+# URLs verified against current repo structures.
 RULE_SOURCES = [
     (
-        "YARA-Rules/malware_index",
-        "https://raw.githubusercontent.com/Yara-Rules/rules/master/"
-        "malware/MALW_Compromised_Certificate.yar",
+        "signature-base/webshells",
+        "https://raw.githubusercontent.com/Neo23x0/signature-base/master/"
+        "yara/gen_webshells.yar",
     ),
     (
-        "YARA-Rules/web_shells",
-        "https://raw.githubusercontent.com/Yara-Rules/rules/master/"
-        "webshells/Webshell_Generic.yar",
+        "signature-base/powershell_suspicious",
+        "https://raw.githubusercontent.com/Neo23x0/signature-base/master/"
+        "yara/gen_powershell_susp.yar",
     ),
     (
-        "YARA-Rules/crypto_miner",
-        "https://raw.githubusercontent.com/Yara-Rules/rules/master/"
-        "crypto/crypto_signatures.yar",
+        "signature-base/log4j_exploit",
+        "https://raw.githubusercontent.com/Neo23x0/signature-base/master/"
+        "yara/expl_log4j_cve_2021_44228.yar",
     ),
     (
-        "elastic/ransomware_linux",
-        "https://raw.githubusercontent.com/elastic/detection-rules/main/"
-        "rules/linux/defense_evasion_base64_decode_pipe_to_shell.toml",
+        "signature-base/cn_hacktools",
+        "https://raw.githubusercontent.com/Neo23x0/signature-base/master/"
+        "yara/gen_cn_hacktools.yar",
     ),
 ]
+
+# ── Relevance filter ───────────────────────────────────────────────────────────
+# Only import rules whose description / strings contain supply-chain keywords.
+# This prevents importing unrelated crypto-math or AV signature rules.
+RELEVANCE_KEYWORDS = re.compile(
+    r"(download|dropper|inject|shell|exec|payload|steal|exfil|"
+    r"backdoor|keylog|miner|obfuscat|base64|encode|decode|"
+    r"supply.chain|npm|pip|pypi|credential|token|secret|password|"
+    r"reverse.shell|c2|command.and.control|persistence|cron|webhook)",
+    re.I,
+)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -185,6 +197,7 @@ def fetch_new_rules(existing_names: set[str]) -> list[tuple[str, str]]:
             continue
 
         # Extract individual rule blocks for new rules only
+        irrelevant = 0
         for rule_name in truly_new:
             # Match the rule block: from "rule <name>" to the closing "}"
             pattern = rf"(rule\s+{re.escape(rule_name)}\s*\{{[^}}]+\}})"
@@ -192,11 +205,17 @@ def fetch_new_rules(existing_names: set[str]) -> list[tuple[str, str]]:
             if not m:
                 continue
             block = m.group(1)
+            # Relevance filter: skip rules with no supply-chain keywords
+            if not RELEVANCE_KEYWORDS.search(block):
+                irrelevant += 1
+                continue
             if syntax_ok(block):
                 new_rules.append((source_name, "\n" + block))
                 print(f"  +NEW: {rule_name} from {source_name}")
             else:
                 print(f"  SKIP (syntax error): {rule_name}", file=sys.stderr)
+        if irrelevant:
+            print(f"  (skipped {irrelevant} irrelevant rules from {source_name})")
 
         if already_have:
             print(f"  (skipped {len(already_have)} already-present rules from {source_name})")
