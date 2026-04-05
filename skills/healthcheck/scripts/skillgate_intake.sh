@@ -65,6 +65,37 @@ cat >>"$OUT_DIR/decision.md" <<EOF
 
 EOF
 
+# 3b) Dependency vulnerability check (OSV + malicious package list)
+dep_exit=0
+{
+  echo "## Dependency Vulnerability Check (OSV)";
+  echo "Target: $TARGET_DIR";
+  echo;
+} >> "$OUT_DIR/l1_findings.md"
+
+set +e
+python3 "$SECURECLAW_SCRIPTS/check-dependencies.py" "$TARGET_DIR" \
+  >>"$OUT_DIR/l1_findings.md" 2>&1
+dep_exit=$?
+set -e
+
+if [[ $dep_exit -eq 0 ]]; then
+  echo "DEP RESULT: OK" >>"$OUT_DIR/l1_findings.md"
+  dep_label="OK"
+elif [[ $dep_exit -eq 1 ]]; then
+  echo "DEP RESULT: BLOCKED — critical CVE or malicious package detected" >>"$OUT_DIR/l1_findings.md"
+  dep_label="BLOCKED"
+else
+  echo "DEP RESULT: WARN — high/medium CVEs found" >>"$OUT_DIR/l1_findings.md"
+  dep_label="WARN"
+fi
+
+{
+  echo "- dep_check exit: $dep_exit (0=ok, 1=blocked, 2=warn)"
+  echo "- dep_check result: $dep_label"
+  echo
+} >> "$OUT_DIR/decision.md"
+
 # 4) Semgrep — semantic static analysis (catches obfuscated attacks regex misses)
 semgrep_exit=0
 if command -v semgrep >/dev/null 2>&1; then
@@ -227,6 +258,11 @@ if [[ $policy_exit -eq 1 ]]; then
   exit 1
 fi
 
+if [[ $dep_exit -eq 1 ]]; then
+  echo "❌ SkillGate intake BLOCKED: critical CVE or malicious package in $SKILL_NAME. Report at $OUT_DIR"
+  exit 1
+fi
+
 if [[ $ioc_exit -eq 1 ]]; then
   echo "❌ SkillGate intake BLOCKED: IOC match in $SKILL_NAME. Report at $OUT_DIR"
   exit 1
@@ -247,11 +283,11 @@ AUDIT_LOG="${ROOT_DIR}/../../reports/skillgate-audit.log"
 mkdir -p "$(dirname "$AUDIT_LOG")"
 TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 OVERALL_RESULT="OK"
-[[ $policy_exit -eq 1 || $ioc_exit -eq 1 || $l2_exit -eq 1 || $sig_exit -eq 1 ]] && OVERALL_RESULT="BLOCKED"
-[[ $policy_exit -eq 2 || $semgrep_exit -eq 2 || $ioc_exit -eq 2 || $l2_exit -eq 2 ]] && \
+[[ $policy_exit -eq 1 || $dep_exit -eq 1 || $ioc_exit -eq 1 || $l2_exit -eq 1 || $sig_exit -eq 1 ]] && OVERALL_RESULT="BLOCKED"
+[[ $policy_exit -eq 2 || $dep_exit -eq 2 || $semgrep_exit -eq 2 || $ioc_exit -eq 2 || $l2_exit -eq 2 ]] && \
   [[ "$OVERALL_RESULT" != "BLOCKED" ]] && OVERALL_RESULT="WARN"
 
-echo "${TIMESTAMP}  skill=${SKILL_NAME}  version=${VERSION}  result=${OVERALL_RESULT}  policy=${policy_label}  semgrep=${semgrep_label}  ioc=${ioc_label}  l2=${l2_label}  sig=${sig_label}  report=${OUT_DIR}" \
+echo "${TIMESTAMP}  skill=${SKILL_NAME}  version=${VERSION}  result=${OVERALL_RESULT}  policy=${policy_label}  dep=${dep_label}  semgrep=${semgrep_label}  ioc=${ioc_label}  l2=${l2_label}  sig=${sig_label}  report=${OUT_DIR}" \
   >> "$AUDIT_LOG"
 
 echo "OK: SkillGate intake generated at $OUT_DIR"
