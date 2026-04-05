@@ -20,6 +20,36 @@ SECURECLAW_SCRIPTS="$(cd "$ROOT_DIR/../../secureclaw/skill/scripts" 2>/dev/null 
 
 mkdir -p "$OUT_DIR"
 
+# ── Step 0: Canonicalise path + symlink escape detection ──────────────────────
+# realpath resolves all symlinks and .. components in the caller-supplied path.
+# Without this, a crafted path like "skills/../../../etc" bypasses scope checks.
+TARGET_DIR="$(realpath "$TARGET_DIR")"
+
+{
+  echo "## Realpath + Symlink Escape Check"
+  echo "Canonical target: $TARGET_DIR"
+  echo
+} >> "$OUT_DIR/l1_findings.md"
+
+symlink_escapes=0
+while IFS= read -r -d '' link; do
+  resolved="$(readlink -f "$link" 2>/dev/null || true)"
+  # Block if the resolved target is outside the skill directory
+  if [[ -n "$resolved" ]] && [[ "$resolved" != "$TARGET_DIR"* ]]; then
+    echo "  🔴 SYMLINK ESCAPE: $link -> $resolved" >> "$OUT_DIR/l1_findings.md"
+    symlink_escapes=$((symlink_escapes + 1))
+  fi
+done < <(find "$TARGET_DIR" -type l -print0 2>/dev/null)
+
+if [[ $symlink_escapes -gt 0 ]]; then
+  echo "SYMLINK RESULT: BLOCKED — $symlink_escapes symlink(s) escape skill directory" \
+    >> "$OUT_DIR/l1_findings.md"
+  symlink_label="BLOCKED"
+else
+  echo "SYMLINK RESULT: OK" >> "$OUT_DIR/l1_findings.md"
+  symlink_label="OK"
+fi
+
 # 1) Create base pack
 (
   cd "$ROOT_DIR"
@@ -252,6 +282,12 @@ fi
   echo
 } >> "$OUT_DIR/decision.md"
 
+# Block on symlink escape (must be checked before any file reads)
+if [[ $symlink_escapes -gt 0 ]]; then
+  echo "❌ SkillGate intake BLOCKED: symlink escape attempt in $SKILL_NAME. Report at $OUT_DIR"
+  exit 1
+fi
+
 # Block on any critical finding
 if [[ $policy_exit -eq 1 ]]; then
   echo "❌ SkillGate intake BLOCKED: block-level policy violations in $SKILL_NAME. Report at $OUT_DIR"
@@ -278,16 +314,85 @@ if [[ $sig_exit -eq 1 ]]; then
   exit 1
 fi
 
-# 7) Audit log — append one line per intake run
+# 7) Smoke test — syntax-validate the skill entry point
+smoke_exit=0
+smoke_label="SKIP"
+entry_point=""
+for candidate in skill.py main.py index.py src/main.py app.py index.js src/index.js; do
+  if [[ -f "$TARGET_DIR/$candidate" ]]; then
+    entry_point="$TARGET_DIR/$candidate"
+    break
+  fi
+done
+
+{
+  echo "## Smoke Test"
+  echo "Entry point: ${entry_point:-none found}"
+  echo
+} >> "$OUT_DIR/l1_findings.md"
+
+if [[ -n "$entry_point" ]]; then
+  set +e
+  case "$entry_point" in
+    *.py)
+      python3 -m py_compile "$entry_point" >> "$OUT_DIR/l1_findings.md" 2>&1
+      smoke_exit=$?
+      ;;
+    *.js)
+      node --check "$entry_point" >> "$OUT_DIR/l1_findings.md" 2>&1
+      smoke_exit=$?
+      ;;
+  esac
+  set -e
+
+  if [[ $smoke_exit -eq 0 ]]; then
+    echo "SMOKE RESULT: OK — entry point syntax valid" >> "$OUT_DIR/l1_findings.md"
+    smoke_label="OK"
+  else
+    echo "SMOKE RESULT: WARN — entry point has syntax errors" >> "$OUT_DIR/l1_findings.md"
+    smoke_label="WARN"
+    smoke_exit=2
+  fi
+else
+  echo "SMOKE RESULT: SKIP — no recognised entry point found" >> "$OUT_DIR/l1_findings.md"
+fi
+
+{
+  echo "- smoke_test exit: $smoke_exit (0=ok, 2=warn)"
+  echo "- smoke_test result: $smoke_label"
+  echo
+} >> "$OUT_DIR/decision.md"
+
+# 8) Audit log — append one line per intake run
 AUDIT_LOG="${ROOT_DIR}/../../reports/skillgate-audit.log"
 mkdir -p "$(dirname "$AUDIT_LOG")"
 TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 OVERALL_RESULT="OK"
-[[ $policy_exit -eq 1 || $dep_exit -eq 1 || $ioc_exit -eq 1 || $l2_exit -eq 1 || $sig_exit -eq 1 ]] && OVERALL_RESULT="BLOCKED"
-[[ $policy_exit -eq 2 || $dep_exit -eq 2 || $semgrep_exit -eq 2 || $ioc_exit -eq 2 || $l2_exit -eq 2 ]] && \
+[[ $symlink_escapes -gt 0 || $policy_exit -eq 1 || $dep_exit -eq 1 || $ioc_exit -eq 1 || $l2_exit -eq 1 || $sig_exit -eq 1 ]] && OVERALL_RESULT="BLOCKED"
+[[ $policy_exit -eq 2 || $dep_exit -eq 2 || $semgrep_exit -eq 2 || $ioc_exit -eq 2 || $l2_exit -eq 2 || $smoke_exit -eq 2 ]] && \
   [[ "$OVERALL_RESULT" != "BLOCKED" ]] && OVERALL_RESULT="WARN"
 
-echo "${TIMESTAMP}  skill=${SKILL_NAME}  version=${VERSION}  result=${OVERALL_RESULT}  policy=${policy_label}  dep=${dep_label}  semgrep=${semgrep_label}  ioc=${ioc_label}  l2=${l2_label}  sig=${sig_label}  report=${OUT_DIR}" \
+echo "${TIMESTAMP}  skill=${SKILL_NAME}  version=${VERSION}  result=${OVERALL_RESULT}  symlink=${symlink_label}  policy=${policy_label}  dep=${dep_label}  semgrep=${semgrep_label}  ioc=${ioc_label}  l2=${l2_label}  sig=${sig_label}  smoke=${smoke_label}  report=${OUT_DIR}" \
   >> "$AUDIT_LOG"
 
-echo "OK: SkillGate intake generated at $OUT_DIR"
+# Write approval record (only if overall result is OK or WARN)
+if [[ "$OVERALL_RESULT" != "BLOCKED" ]]; then
+  cat > "$OUT_DIR/APPROVED" <<APEOF
+skill:       $SKILL_NAME
+version:     $VERSION
+approved_at: $TIMESTAMP
+approved_by: SkillGate-auto
+result:      $OVERALL_RESULT
+symlink:     $symlink_label
+policy:      $policy_label
+dep:         $dep_label
+semgrep:     $semgrep_label
+ioc:         $ioc_label
+l2:          $l2_label
+sig:         $sig_label
+smoke:       $smoke_label
+canonical_path: $TARGET_DIR
+APEOF
+fi
+
+echo "✅ SkillGate intake complete: result=${OVERALL_RESULT}  report=${OUT_DIR}"
