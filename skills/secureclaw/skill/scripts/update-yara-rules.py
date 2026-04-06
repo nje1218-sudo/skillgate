@@ -110,7 +110,7 @@ def syntax_ok(yara_text: str) -> bool:
         )
         return result.returncode == 0
     except Exception:
-        return True
+        return False
     finally:
         Path(tmp).unlink(missing_ok=True)
 

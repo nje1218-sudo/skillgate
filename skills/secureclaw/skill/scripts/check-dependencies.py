@@ -23,11 +23,15 @@ Exit codes:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(__file__))
+from skillgate_utils import SKIP_DIRS  # noqa: E402
 
 OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch"
 TIMEOUT = 20
@@ -36,7 +40,6 @@ MAX_BATCH = 1000  # OSV batch limit
 DEFAULT_IOC = (
     Path(__file__).parent.parent / "configs" / "supply-chain-ioc.json"
 )
-SKIP_DIRS = {".git", "node_modules", "dist", "build", "__pycache__", ".venv", "venv"}
 
 
 # ── Manifest Parsers ───────────────────────────────────────────────────────────
@@ -159,8 +162,12 @@ def query_osv(packages: list[tuple[str, str, str]]) -> list[dict]:
     if not packages:
         return []
 
+    if len(packages) > MAX_BATCH:
+        print(f"WARN: only querying first {MAX_BATCH} of {len(packages)} packages (OSV batch limit)")
+        packages = packages[:MAX_BATCH]
+
     queries = []
-    for eco, name, ver in packages[:MAX_BATCH]:
+    for eco, name, ver in packages:
         q: dict = {"package": {"ecosystem": eco, "name": name}}
         if ver:
             q["version"] = ver
@@ -206,9 +213,9 @@ def max_severity(vuln: dict) -> str:
                 s = db.get("cvss_score", 0)
                 if s >= 9.0:
                     severities.append("CRITICAL")
-                elif s >= 7.0:
+                elif 7.0 <= s < 9.0:
                     severities.append("HIGH")
-                elif s >= 4.0:
+                elif 4.0 <= s < 7.0:
                     severities.append("MEDIUM")
     # Also check severity field directly
     for sev in vuln.get("severity", []):
@@ -221,9 +228,9 @@ def max_severity(vuln: dict) -> str:
                 s = float(bm.group(1))
                 if s >= 9.0:
                     severities.append("CRITICAL")
-                elif s >= 7.0:
+                elif 7.0 <= s < 9.0:
                     severities.append("HIGH")
-                elif s >= 4.0:
+                elif 4.0 <= s < 7.0:
                     severities.append("MEDIUM")
     # Check aliases for known critical patterns
     for alias in vuln.get("aliases", []):

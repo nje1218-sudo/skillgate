@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -46,7 +47,14 @@ def load_policy(name: str) -> dict:
     if not _YAML_OK:
         sys.exit("pyyaml required: pip install pyyaml")
     with open(path) as f:
-        return yaml.safe_load(f)
+        raw = yaml.safe_load(f)
+    # Support dual policy formats:
+    # Format A (policies/balanced.yaml): top-level allow/deny keys
+    # Format B (configs/policy.yaml):    top-level 'profiles' key with named profiles
+    if "profiles" in raw:
+        profile = raw["profiles"].get(name) or next(iter(raw["profiles"].values()))
+        return profile
+    return raw
 
 
 def list_policies() -> list[str]:
@@ -58,11 +66,14 @@ def list_policies() -> list[str]:
 def run_scanner(script: Path, *args: str) -> tuple[int, str]:
     """Run a Python scanner script, return (exit_code, combined_output)."""
     if not script.exists():
-        return 0, f"# SKIP: {script.name} not found\n"
-    result = subprocess.run(
-        [sys.executable, str(script), *args],
-        capture_output=True, text=True,
-    )
+        return 2, f"# SKIP: {script.name} not found\n"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), *args],
+            capture_output=True, text=True, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return 2, f"# TIMEOUT: {script.name} exceeded 30s\n"
     output = result.stdout + (result.stderr if result.stderr.strip() else "")
     return result.returncode, output
 
@@ -534,18 +545,27 @@ def cmd_scan(args: argparse.Namespace) -> int:
             print(f"   {s}", file=sys.stderr)
         return 1
 
-    # ── static scanners ─────────────────────────────────────────────────────
-    scanner_out = ""
-    worst_exit  = 0
-
-    for script_name, extra_args in [
+    # ── static scanners (parallel) ──────────────────────────────────────────
+    scanner_tasks = [
         ("policy_check.py",            [str(skill_path)]),
         ("check-dangerous-commands.py",[str(skill_path)]),
         ("check-ioc.py",               [str(skill_path), skill_name]),
         ("check-dependencies.py",      [str(skill_path)]),
-    ]:
-        script = SCRIPTS_DIR / script_name
-        exit_code, output = run_scanner(script, *extra_args)
+    ]
+    scanner_results: dict[str, tuple[int, str]] = {}
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {
+            pool.submit(run_scanner, SCRIPTS_DIR / name, *extra): name
+            for name, extra in scanner_tasks
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            scanner_results[name] = future.result()
+
+    scanner_out = ""
+    worst_exit  = 0
+    for script_name, _ in scanner_tasks:  # print in deterministic order
+        exit_code, output = scanner_results[script_name]
         scanner_out += f"\n### {script_name}\n{output}\n"
         if exit_code > worst_exit:
             worst_exit = exit_code

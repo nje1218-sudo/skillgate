@@ -379,8 +379,8 @@ def main() -> int:
         method_name = 'strace'
         run_fn = run_strace
     else:
-        print('L2: no isolation tool available (install Docker, nsjail, or strace)')
-        return 0
+        print('L2: WARN — no isolation tool available (install Docker, nsjail, or strace); dynamic analysis skipped')
+        return 2
 
     print(f'L2 sandbox: {skill_dir.name} | method={method_name} | entry={entry.name} | timeout={args.timeout}s')
 

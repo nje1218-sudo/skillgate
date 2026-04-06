@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import urllib.error
@@ -39,11 +40,11 @@ URLHAUS_URL = (
 # GitHub API — list files recently added/changed in OSSF malicious packages
 OSSF_PYPI_API = (
     "https://api.github.com/repos/ossf/malicious-packages"
-    "/contents/osv/malicious/pypi?per_page=100"
+    "/contents/osv/malicious/pypi?per_page=200"
 )
 OSSF_NPM_API = (
     "https://api.github.com/repos/ossf/malicious-packages"
-    "/contents/osv/malicious/npm?per_page=100"
+    "/contents/osv/malicious/npm?per_page=200"
 )
 OSSF_RAW = "https://raw.githubusercontent.com/ossf/malicious-packages/main/{path}"
 
@@ -58,10 +59,11 @@ TIMEOUT = 15  # seconds
 
 def _get(url: str, json_response: bool = False):
     """Simple HTTP GET, returns text or parsed JSON."""
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "SkillGate-ThreatIntel/1.0"},
-    )
+    headers = {"User-Agent": "SkillGate-ThreatIntel/1.0"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token and "api.github.com" in url:
+        headers["Authorization"] = f"token {token}"
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             body = r.read().decode("utf-8", errors="replace")
@@ -149,8 +151,10 @@ def _fetch_ossf_package_names(api_url: str, ecosystem: str) -> list[str]:
         return []
 
     names = []
-    # Sample first 50 files to avoid rate-limiting
-    for entry in entries[:50]:
+    # Sample first 200 files (per_page=100 returns up to 100; paginate if needed)
+    if len(entries) >= 100:
+        print(f"  OSSF: received {len(entries)} entries (may be truncated by GitHub API per_page limit)")
+    for entry in entries[:200]:
         path = entry.get("path", "")
         if not path.endswith(".json"):
             continue

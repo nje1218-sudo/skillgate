@@ -40,7 +40,7 @@ jobs:
           fi
           python3 skills/secureclaw/skill/scripts/update-threat-intel.py $DRY \
             skills/secureclaw/skill/configs/supply-chain-ioc.json
-          echo "changed=$(git diff --quiet skills/secureclaw/skill/configs/supply-chain-ioc.json && echo false || echo true)" >> "$GITHUB_OUTPUT"
+          echo "changed=$(git diff --name-only skills/secureclaw/skill/configs/supply-chain-ioc.json | grep -q . && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       # ── Tier 2: Update YARA rules ────────────────────────────────────────────
       - name: Update YARA rules
@@ -52,7 +52,7 @@ jobs:
           fi
           python3 skills/secureclaw/skill/scripts/update-yara-rules.py $DRY \
             skills/secureclaw/skill/rules/supply-chain.yar
-          echo "changed=$(git diff --quiet skills/secureclaw/skill/rules/supply-chain.yar && echo false || echo true)" >> "$GITHUB_OUTPUT"
+          echo "changed=$(git diff --name-only skills/secureclaw/skill/rules/supply-chain.yar | grep -q . && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       # ── Syntax-validate YARA after update ───────────────────────────────────
       - name: Validate YARA syntax

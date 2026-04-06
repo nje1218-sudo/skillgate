@@ -19,30 +19,30 @@ Exit codes:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
-SKIP_DIRS = {".git", "node_modules", "dist", "build", "__pycache__"}
-
-
-def iter_files(root: Path):
-    for p in root.rglob("*"):
-        if any(part in SKIP_DIRS for part in p.parts):
-            continue
-        if p.is_file() and p.stat().st_size <= 2_000_000:
-            yield p
+sys.path.insert(0, os.path.dirname(__file__))
+from skillgate_utils import iter_files, SKIP_DIRS  # noqa: E402
 
 
 def load_ioc(config_path: Path) -> dict:
     return json.loads(config_path.read_text())
 
 
+def _normalize(s: str) -> str:
+    """Normalize separators for typosquatting detection."""
+    return re.sub(r'[-_.]', '', s).lower()
+
+
 def check_name_patterns(skill_name: str, name_patterns: list[str]) -> list[str]:
     hits = []
     name_lower = skill_name.lower()
+    name_norm = _normalize(skill_name)
     for pattern in name_patterns:
-        if pattern.lower() in name_lower:
+        if pattern.lower() in name_lower or _normalize(pattern) in name_norm:
             hits.append(pattern)
     return hits
 

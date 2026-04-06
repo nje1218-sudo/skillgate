@@ -37,6 +37,12 @@ jobs:
       - name: Enforce gate — fail PR on BLOCKED result
         if: always()
         run: |
+          # Guard: intake must have produced a report directory
+          if [ ! -d reports/skillgate-pack ]; then
+            echo "❌ SkillGate gate FAILED: intake produced no reports (intake step may have crashed)" >&2
+            exit 1
+          fi
+
           BLOCKED=0
           for f in reports/skillgate-pack/l1_findings.md reports/skillgate-pack/l2_summary.md; do
             if [ -f "$f" ] && grep -qE "RESULT: BLOCKED" "$f"; then

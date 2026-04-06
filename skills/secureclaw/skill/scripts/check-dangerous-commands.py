@@ -16,22 +16,16 @@ Exit codes:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
-SKIP_DIRS = {".git", "node_modules", "dist", "build", "__pycache__"}
+sys.path.insert(0, os.path.dirname(__file__))
+from skillgate_utils import iter_files, SKIP_DIRS  # noqa: E402
 
 ACTION_EXIT = {"block": 1, "require_approval": 2, "warn": 2}
 ACTION_ICON = {"block": "🔴", "require_approval": "🟠", "warn": "🟡"}
-
-
-def iter_files(root: Path):
-    for p in root.rglob("*"):
-        if any(part in SKIP_DIRS for part in p.parts):
-            continue
-        if p.is_file() and p.stat().st_size <= 2_000_000:
-            yield p
 
 
 def main() -> int:

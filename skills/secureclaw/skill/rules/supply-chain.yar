@@ -200,7 +200,7 @@ rule sc_clawhavoc_patterns {
         $e = "prerequisite" nocase
         $f = "polymarket" nocase
     condition:
-        2 of ($a,$b,$c,$d) or $b or $d
+        2 of them
 }
 
 rule sc_macos_gatekeeper_bypass {
@@ -259,7 +259,7 @@ rule sc_dynamic_import_exec {
         $e = /__import__\s*\(/ nocase
         $f = /importlib\.import_module/ nocase
     condition:
-        any of ($a,$b,$c,$e,$f)
+        any of ($a,$b,$c,$e,$f) or $d
 }
 
 rule sc_subprocess_shell_true {
