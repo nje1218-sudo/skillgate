@@ -38,14 +38,16 @@ WARN_PATTERNS = {
     "install_hooks": re.compile(r"postinstall|preinstall", re.I),
 }
 
-SKIP_DIRS = {".git", "node_modules", "dist", "build", "__pycache__"}
+SKIP_DIRS  = {".git", "node_modules", "dist", "build", "__pycache__"}
+CODE_EXTS  = {".py", ".js", ".ts", ".sh", ".bash", ".mjs", ".cjs", ".rb", ".go", ".rs"}
 
 
 def iter_files(root: Path):
     for p in root.rglob("*"):
         if any(part in SKIP_DIRS for part in p.parts):
             continue
-        if p.is_file() and p.stat().st_size <= 2_000_000:
+        # Only scan code files — skip docs/markdown to avoid false positives from examples
+        if p.is_file() and p.suffix.lower() in CODE_EXTS and p.stat().st_size <= 2_000_000:
             yield p
 
 

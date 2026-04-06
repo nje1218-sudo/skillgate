@@ -33,11 +33,28 @@ python3 bin/skillgate scan skills/skill-vetter --policy balanced
 # 嚴格模式
 python3 bin/skillgate scan skills/skill-vetter --policy strict
 
+# 排除特定目錄（可重複使用，掃描器不進入這些目錄）
+python3 bin/skillgate scan skills/my-skill --policy balanced --exclude tests --exclude fixtures
+
 # 列出所有 policy
 python3 bin/skillgate policies
 ```
 
 輸出放在 `reports/<skill-name>/`，不會上傳或對外回傳任何資料。
+
+---
+
+## 商業訂閱方案
+
+SkillGate 目前提供下列授權層級：
+
+| 方案 | 對象 | 功能範圍 |
+|------|------|---------|
+| **Community**（免費） | 個人、開源專案 | 完整本地掃描、balanced/strict policy、CLI 使用 |
+| **Pro**（月費制） | 中小型團隊 | 加上：自訂 policy profile、CI/CD 整合範本、優先技術支援 |
+| **Enterprise** | 大型組織 | 加上：私有 policy registry、SAML SSO、稽核日誌匯出、SLA 保障 |
+
+> 洽詢商業授權請聯絡：skillgate@openclaw.ai
 
 ---
 

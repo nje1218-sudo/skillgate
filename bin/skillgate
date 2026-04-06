@@ -4,6 +4,7 @@
 Usage:
   skillgate scan <skill_path> [--policy balanced] [--out ./reports]
   skillgate scan <skill_path> --policy strict
+  skillgate scan <skill_path> --exclude tests --exclude fixtures
 
 Scans a skill directory against a named policy and writes:
   reports/<skill_name>/PERMISSIONS.md
@@ -27,9 +28,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # ── Locate repo root (one level above this script's bin/ dir) ─────────────────
-REPO_ROOT   = Path(__file__).resolve().parent.parent
-SCRIPTS_DIR = REPO_ROOT / "skills" / "healthcheck" / "scripts"
-POLICIES_DIR= REPO_ROOT / "skills" / "healthcheck" / "policies"
+REPO_ROOT      = Path(__file__).resolve().parent.parent
+SCRIPTS_DIR    = REPO_ROOT / "skills" / "healthcheck" / "scripts"
+SECURECLAW_DIR = REPO_ROOT / "skills" / "secureclaw" / "skill" / "scripts"
+POLICIES_DIR   = REPO_ROOT / "skills" / "healthcheck" / "policies"
 
 try:
     import yaml
@@ -113,11 +115,9 @@ _WRITE_PATTERNS = re.compile(
     re.I,
 )
 
-# File read patterns hitting sensitive areas
+# File read patterns hitting sensitive areas (single group to avoid None from alternation)
 _READ_PATTERNS = re.compile(
-    r'open\s*\(\s*[\'"](/[^\'"]+)[\'"]|'
-    r'readFile\s*\(\s*[\'"](/[^\'"]+)[\'"]|'
-    r'Path\s*\(\s*[\'"](/[^\'"]+)[\'"]',
+    r'(?:open|readFile|createReadStream|Path)\s*\(\s*[\'"](/[^\'"]+)[\'"]',
     re.I,
 )
 
@@ -125,15 +125,16 @@ SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "bu
 CODE_EXTS  = {".py", ".js", ".ts", ".sh", ".bash", ".mjs", ".cjs"}
 
 
-def iter_code_files(root: Path):
+def iter_code_files(root: Path, extra_skip: set[str] | None = None):
+    skip = SKIP_DIRS | (extra_skip or set())
     for p in root.rglob("*"):
-        if any(part in SKIP_DIRS for part in p.parts):
+        if any(part in skip for part in p.parts):
             continue
         if p.is_file() and p.suffix in CODE_EXTS and p.stat().st_size <= 500_000:
             yield p
 
 
-def detect_in_skill(skill_dir: Path) -> dict:
+def detect_in_skill(skill_dir: Path, extra_skip: set[str] | None = None) -> dict:
     """Return a dict of detected capabilities from static file analysis."""
     net_hits:   list[tuple[str, str]] = []
     exec_hits:  list[tuple[str, str]] = []
@@ -141,7 +142,7 @@ def detect_in_skill(skill_dir: Path) -> dict:
     read_hits:  list[tuple[str, str]] = []
     tools:      set[str] = set()
 
-    for f in iter_code_files(skill_dir):
+    for f in iter_code_files(skill_dir, extra_skip):
         try:
             text = f.read_text(errors="ignore")
         except Exception:
@@ -546,17 +547,18 @@ def cmd_scan(args: argparse.Namespace) -> int:
         return 1
 
     # ── static scanners (parallel) ──────────────────────────────────────────
+    # policy_check.py lives in healthcheck/scripts; the rest in secureclaw/scripts
     scanner_tasks = [
-        ("policy_check.py",            [str(skill_path)]),
-        ("check-dangerous-commands.py",[str(skill_path)]),
-        ("check-ioc.py",               [str(skill_path), skill_name]),
-        ("check-dependencies.py",      [str(skill_path)]),
+        ("policy_check.py",            SCRIPTS_DIR,    [str(skill_path)]),
+        ("check-dangerous-commands.py", SECURECLAW_DIR, [str(skill_path)]),
+        ("check-ioc.py",               SECURECLAW_DIR, [str(skill_path), skill_name]),
+        ("check-dependencies.py",      SECURECLAW_DIR, [str(skill_path)]),
     ]
     scanner_results: dict[str, tuple[int, str]] = {}
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {
-            pool.submit(run_scanner, SCRIPTS_DIR / name, *extra): name
-            for name, extra in scanner_tasks
+            pool.submit(run_scanner, sdir / name, *extra): name
+            for name, sdir, extra in scanner_tasks
         }
         for future in as_completed(futures):
             name = futures[future]
@@ -564,7 +566,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
     scanner_out = ""
     worst_exit  = 0
-    for script_name, _ in scanner_tasks:  # print in deterministic order
+    for script_name, _, _ in scanner_tasks:  # print in deterministic order
         exit_code, output = scanner_results[script_name]
         scanner_out += f"\n### {script_name}\n{output}\n"
         if exit_code > worst_exit:
@@ -573,7 +575,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print(f"  {script_name}: {status}")
 
     # ── pattern detection ────────────────────────────────────────────────────
-    detected   = detect_in_skill(skill_path)
+    extra_skip = set(args.exclude) if args.exclude else None
+    detected   = detect_in_skill(skill_path, extra_skip)
     evaluation = evaluate(detected, policy, worst_exit)
     result     = overall_result(evaluation)
 
@@ -611,6 +614,8 @@ def main() -> int:
                         help="Skill version string for reports")
     scan_p.add_argument("--out",          default=str(REPO_ROOT / "reports"),
                         help="Output directory (default: ./reports)")
+    scan_p.add_argument("--exclude",      action="append", default=[], metavar="DIR",
+                        help="Exclude directory name from scan (repeatable, e.g. --exclude tests)")
 
     list_p = sub.add_parser("policies", help="List available policies")
 
