@@ -1,26 +1,23 @@
-# SkillGate Report — `skill-scanner` v0.0.0
+# SkillGate Report — `tmpp4kqpegq` v0.0.0
 
 | | |
 |---|---|
 | Policy | `balanced` v0.1 |
-| Result | ❌ **BLOCKED** |
-| Timestamp | 2026-04-06T14:49:59Z |
+| Result | ⚠️ **WARN** |
+| Timestamp | 2026-04-06T19:24:16Z |
 
 ## Permission Evaluation
 
 | Category | Status | Risk | Detail |
 |----------|--------|------|--------|
 | Network | OK | ✅ CLEAN | no network calls detected |
-| Exec / Subprocess | VIOLATION | 🟠 HIGH | exec/subprocess detected (1 hit(s)) |
-| Tools / Imports | INFO | 🔵 LOW | 2 undeclared tool(s) imported |
+| Exec / Subprocess | OK | ✅ CLEAN | no exec/subprocess detected |
+| Tools / Imports | OK | ✅ CLEAN | all imported tools declared in policy |
 | Read Paths | OK | ✅ CLEAN | all detected reads within allowed paths |
 | Write Paths | OK | ✅ CLEAN | no write operations detected |
 | Static Scanner Gate | WARN | 🟡 MEDIUM | static scanner found suspicious patterns |
 
 ## Remediation
-
-**Must fix before admission:**
-- Exec / Subprocess: exec/subprocess detected (1 hit(s))
 
 **Requires human review:**
 - Static Scanner Gate: static scanner found suspicious patterns
@@ -31,19 +28,25 @@
 ```
 
 ### policy_check.py
-OK: no policy violations detected
+BLOCK_VIOLATIONS:
+- network_exec: /tmp/tmpp4kqpegq/tests/skill.py
+- decode_and_run: /tmp/tmpp4kqpegq/tests/skill.py
 
 
 ### check-dangerous-commands.py
-# SKIP: check-dangerous-commands.py not found
+🔴 [BLOCK]
+  - dynamic_execution: /tmp/tmpp4kqpegq/tests/skill.py
+🟠 [REQUIRE_APPROVAL]
+  - config_modification: /tmp/tmpp4kqpegq/tests/skill.py
 
 
 ### check-ioc.py
-# SKIP: check-ioc.py not found
+🟠 [WARN — SUSPICIOUS PATTERN]
+  - suspicious pattern 'exec\(' in: /tmp/tmpp4kqpegq/tests/skill.py
 
 
 ### check-dependencies.py
-# SKIP: check-dependencies.py not found
+OK: no dependency manifests found
 
 
 ```

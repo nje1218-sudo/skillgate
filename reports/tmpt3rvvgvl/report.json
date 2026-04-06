@@ -1,9 +1,9 @@
 {
-  "skill": "skill-scanner",
+  "skill": "tmpt3rvvgvl",
   "version": "0.0.0",
   "policy": "balanced",
-  "timestamp": "2026-04-06T14:49:59Z",
-  "result": "BLOCKED",
+  "timestamp": "2026-04-06T19:25:58Z",
+  "result": "WARN",
   "evaluation": {
     "network": {
       "status": "OK",
@@ -11,14 +11,14 @@
       "detail": "no network calls detected"
     },
     "exec": {
-      "status": "VIOLATION",
-      "risk": "HIGH",
-      "detail": "exec/subprocess detected (1 hit(s))"
+      "status": "OK",
+      "risk": "CLEAN",
+      "detail": "no exec/subprocess detected"
     },
     "tools": {
-      "status": "INFO",
-      "risk": "LOW",
-      "detail": "2 undeclared tool(s) imported"
+      "status": "OK",
+      "risk": "CLEAN",
+      "detail": "all imported tools declared in policy"
     },
     "read_paths": {
       "status": "OK",
@@ -44,29 +44,18 @@
       "hits": []
     },
     "exec": {
-      "risk": "HIGH",
-      "status": "VIOLATION",
-      "detail": "exec/subprocess detected (1 hit(s))",
-      "hits": [
-        [
-          "scan.py",
-          "subprocess.run"
-        ]
-      ]
+      "risk": "CLEAN",
+      "status": "OK",
+      "detail": "no exec/subprocess detected",
+      "hits": []
     },
     "tools": {
-      "risk": "LOW",
-      "status": "INFO",
-      "detail": "2 undeclared tool(s) imported",
-      "detected": [
-        "subprocess",
-        "venv"
-      ],
+      "risk": "CLEAN",
+      "status": "OK",
+      "detail": "all imported tools declared in policy",
+      "detected": [],
       "declared": [],
-      "undeclared": [
-        "subprocess",
-        "venv"
-      ]
+      "undeclared": []
     },
     "read_paths": {
       "risk": "CLEAN",

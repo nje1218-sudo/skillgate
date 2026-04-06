@@ -1,19 +1,19 @@
-# PERMISSIONS — `skill-scanner` v0.0.0
+# PERMISSIONS — `clean_skill` v0.0.0
 
 > Policy: **balanced** v0.1  
-> Scan: 2026-04-06T14:49:59Z  
-> Result: ❌ BLOCKED
+> Scan: 2026-04-06T19:25:58Z  
+> Result: ✅ OK
 
 ## Risk Summary
 
 | Category | Status | Risk | Notes |
 |----------|--------|------|-------|
 | Network | OK | ✅ CLEAN | no network calls detected |
-| Exec / Subprocess | VIOLATION | 🟠 HIGH | exec/subprocess detected (1 hit(s)) |
-| Tools / Imports | INFO | 🔵 LOW | 2 undeclared tool(s) imported |
+| Exec / Subprocess | OK | ✅ CLEAN | no exec/subprocess detected |
+| Tools / Imports | OK | ✅ CLEAN | all imported tools declared in policy |
 | Read Paths | OK | ✅ CLEAN | all detected reads within allowed paths |
 | Write Paths | OK | ✅ CLEAN | no write operations detected |
-| Static Scanner Gate | WARN | 🟡 MEDIUM | static scanner found suspicious patterns |
+| Static Scanner Gate | OK | ✅ CLEAN | static scan clean |
 
 ## Details
 
@@ -23,13 +23,11 @@
 
 ### Exec / Subprocess
 - **Policy**: `allow.exec: False`
-- **Detected**: yes
-  - `scan.py`: `subprocess.run`
+- **Detected**: no
 
 ### Tools / Imports
 - **Policy declares**: `[]`
-- **Detected imports**: `['subprocess', 'venv']`
-- **Undeclared**: `['subprocess', 'venv']`
+- **Detected imports**: `[]`
 
 ### Read Paths
 - **Policy allow**: `['/home/node/.openclaw/workspace']`
