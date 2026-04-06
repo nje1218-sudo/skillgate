@@ -396,3 +396,24 @@ APEOF
 fi
 
 echo "✅ SkillGate intake complete: result=${OVERALL_RESULT}  report=${OUT_DIR}"
+
+# 9) Generate PERMISSIONS.md + report.md + report.json
+POLICY_FILE="${ROOT_DIR}/configs/policy.yaml"
+REPORTS_DIR="${ROOT_DIR}/../../reports"
+REPORT_SCRIPT="${ROOT_DIR}/scripts/generate_report.py"
+
+if [[ -f "$REPORT_SCRIPT" ]]; then
+  set +e
+  python3 "$REPORT_SCRIPT" \
+    "$SKILL_NAME" "$VERSION" "$OUT_DIR" \
+    --policy  "$POLICY_FILE" \
+    --reports-dir "$REPORTS_DIR"
+  report_gen_exit=$?
+  set -e
+
+  if [[ $report_gen_exit -eq 0 ]]; then
+    echo "📄 Reports: ${REPORTS_DIR}/${SKILL_NAME}/"
+  else
+    echo "  WARN: report generation failed (exit=$report_gen_exit)" >&2
+  fi
+fi

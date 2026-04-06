@@ -1,0 +1,112 @@
+# SkillGate Policy Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# Edit this file to tune gate behaviour.
+#
+# Profiles:
+#   balanced  — warns on suspicious patterns, blocks only on critical
+#   strict    — blocks on high severity too, no undeclared network
+#
+# Active profile is set via default_profile (or --profile flag at runtime).
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: "1.0"
+default_profile: balanced
+
+profiles:
+
+  # ── Balanced (default) ────────────────────────────────────────────────────
+  # Suitable for general-purpose skills. Blocks critical threats, warns on
+  # suspicious patterns that need human review before deployment.
+  balanced:
+
+    network:
+      allow: true               # network calls are allowed
+      block_if_undeclared: false  # only warn if not declared in skill manifest
+      blocked_schemes: []         # e.g. [ftp, file] to block specific schemes
+
+    sensitive_paths:
+      # Any file access matching these patterns → BLOCK
+      block:
+        - "/.ssh/"
+        - "/etc/passwd"
+        - "/etc/shadow"
+        - "/etc/sudoers"
+        - "secrets/"
+        - ".env"
+        - "credentials/"
+        - "/.openclaw/.env"
+        - "/.clawdbot/"
+        - "/.aws/credentials"
+      # Any file access matching these patterns → WARN
+      warn:
+        - "/tmp/"
+        - "/var/log/"
+        - "/proc/"
+        - "/sys/"
+
+    command_execution:
+      allow: true               # subprocess / os.system calls are allowed
+      # Patterns that require explicit human approval before deployment
+      require_approval:
+        - "subprocess.Popen"
+        - "os.system"
+        - "shell=True"
+        - "os.popen"
+
+    destructive_ops:
+      allow: false              # rm -rf, DROP TABLE, etc. are blocked
+
+    privilege_escalation:
+      allow: false              # sudo, chmod 777, pkexec are blocked
+
+    # Severity thresholds
+    block_on_critical: true
+    block_on_high:     false    # warn only
+    warn_on_medium:    true
+    warn_on_low:       false
+
+    # What appears in the generated PERMISSIONS.md
+    declared_permissions: []    # populated by skill manifest if present
+
+  # ── Strict ────────────────────────────────────────────────────────────────
+  # For high-trust environments or skills that process sensitive data.
+  # Blocks on HIGH severity findings, disallows undeclared network access.
+  strict:
+
+    network:
+      allow: false              # no network calls allowed
+      block_if_undeclared: true
+      blocked_schemes: []
+
+    sensitive_paths:
+      block:
+        - "/.ssh/"
+        - "/etc/"
+        - "secrets/"
+        - ".env"
+        - "credentials/"
+        - "/.openclaw/"
+        - "/.clawdbot/"
+        - "/.aws/"
+        - "/root/"
+        - "/home/"
+      warn:
+        - "/tmp/"
+        - "/var/"
+
+    command_execution:
+      allow: false              # no subprocess or shell calls
+      require_approval: []      # irrelevant when allow=false
+
+    destructive_ops:
+      allow: false
+
+    privilege_escalation:
+      allow: false
+
+    block_on_critical: true
+    block_on_high:     true     # also block on HIGH
+    warn_on_medium:    true
+    warn_on_low:       true
+
+    declared_permissions: []
