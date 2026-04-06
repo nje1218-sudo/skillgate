@@ -1,0 +1,614 @@
+#!/usr/bin/env python3
+"""skillgate — SkillGate CLI
+
+Usage:
+  skillgate scan <skill_path> [--policy balanced] [--out ./reports]
+  skillgate scan <skill_path> --policy strict
+
+Scans a skill directory against a named policy and writes:
+  reports/<skill_name>/PERMISSIONS.md
+  reports/<skill_name>/report.md
+  reports/<skill_name>/report.json
+
+All output is local — no network calls are made.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+# ── Locate repo root (one level above this script's bin/ dir) ─────────────────
+REPO_ROOT   = Path(__file__).resolve().parent.parent
+SCRIPTS_DIR = REPO_ROOT / "skills" / "healthcheck" / "scripts"
+POLICIES_DIR= REPO_ROOT / "skills" / "healthcheck" / "policies"
+
+try:
+    import yaml
+    _YAML_OK = True
+except ImportError:
+    _YAML_OK = False
+
+
+# ── Policy loader ─────────────────────────────────────────────────────────────
+
+def load_policy(name: str) -> dict:
+    path = POLICIES_DIR / f"{name}.yaml"
+    if not path.exists():
+        sys.exit(f"Policy not found: {path}\nAvailable: {list_policies()}")
+    if not _YAML_OK:
+        sys.exit("pyyaml required: pip install pyyaml")
+    with open(path) as f:
+        return yaml.safe_load(f)
+
+
+def list_policies() -> list[str]:
+    return [p.stem for p in POLICIES_DIR.glob("*.yaml")]
+
+
+# ── Scanner runners ───────────────────────────────────────────────────────────
+
+def run_scanner(script: Path, *args: str) -> tuple[int, str]:
+    """Run a Python scanner script, return (exit_code, combined_output)."""
+    if not script.exists():
+        return 0, f"# SKIP: {script.name} not found\n"
+    result = subprocess.run(
+        [sys.executable, str(script), *args],
+        capture_output=True, text=True,
+    )
+    output = result.stdout + (result.stderr if result.stderr.strip() else "")
+    return result.returncode, output
+
+
+# ── Pattern-based detectors ───────────────────────────────────────────────────
+
+# Network usage patterns
+_NET_PATTERNS = re.compile(
+    r"\b(requests\.(get|post|put|delete|patch|head)|"
+    r"urllib\.request|httpx\.|aiohttp\.|"
+    r"fetch\s*\(|axios\.|curl\b|wget\b|"
+    r"socket\.connect|http\.client)",
+    re.I,
+)
+
+# Exec/subprocess patterns
+_EXEC_PATTERNS = re.compile(
+    r"\b(subprocess\.(run|Popen|call|check_output)|"
+    r"os\.(system|popen|execv|execvp)|"
+    r"eval\s*\(|exec\s*\(|"
+    r"child_process\.(exec|spawn)|"
+    r"Runtime\.exec|ProcessBuilder)",
+    re.I,
+)
+
+# Tool/import patterns (what external libraries does the skill use)
+_IMPORT_PATTERNS = re.compile(
+    r"^\s*(?:import|from)\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+    re.MULTILINE,
+)
+_REQUIRE_PATTERNS = re.compile(r"""require\s*\(\s*['"]([^'"]+)['"]\s*\)""")
+
+# File write patterns
+_WRITE_PATTERNS = re.compile(
+    r'open\s*\(\s*[\'"][^\'"]+[\'"]\s*,\s*[\'"][^\'"]*(w|a|x)[^\'"]*[\'"]\s*\)|'
+    r'\.write\s*\(|writeFile|appendFile|fs\.open',
+    re.I,
+)
+
+# File read patterns hitting sensitive areas
+_READ_PATTERNS = re.compile(
+    r'open\s*\(\s*[\'"](/[^\'"]+)[\'"]|'
+    r'readFile\s*\(\s*[\'"](/[^\'"]+)[\'"]|'
+    r'Path\s*\(\s*[\'"](/[^\'"]+)[\'"]',
+    re.I,
+)
+
+SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
+CODE_EXTS  = {".py", ".js", ".ts", ".sh", ".bash", ".mjs", ".cjs"}
+
+
+def iter_code_files(root: Path):
+    for p in root.rglob("*"):
+        if any(part in SKIP_DIRS for part in p.parts):
+            continue
+        if p.is_file() and p.suffix in CODE_EXTS and p.stat().st_size <= 500_000:
+            yield p
+
+
+def detect_in_skill(skill_dir: Path) -> dict:
+    """Return a dict of detected capabilities from static file analysis."""
+    net_hits:   list[tuple[str, str]] = []
+    exec_hits:  list[tuple[str, str]] = []
+    write_hits: list[tuple[str, str]] = []
+    read_hits:  list[tuple[str, str]] = []
+    tools:      set[str] = set()
+
+    for f in iter_code_files(skill_dir):
+        try:
+            text = f.read_text(errors="ignore")
+        except Exception:
+            continue
+        rel = str(f.relative_to(skill_dir))
+
+        for m in _NET_PATTERNS.finditer(text):
+            net_hits.append((rel, m.group(0)))
+        for m in _EXEC_PATTERNS.finditer(text):
+            exec_hits.append((rel, m.group(0)))
+        for m in _WRITE_PATTERNS.finditer(text):
+            write_hits.append((rel, m.group(0)[:60]))
+        for m in _READ_PATTERNS.finditer(text):
+            read_hits.append((rel, m.group(1)))
+
+        # Collect imported tools
+        for m in _IMPORT_PATTERNS.finditer(text):
+            pkg = m.group(1).split(".")[0].lower()
+            if pkg not in ("os", "sys", "re", "json", "pathlib", "typing",
+                           "collections", "itertools", "functools", "io", "abc",
+                           "math", "datetime", "time", "copy", "enum", "logging",
+                           "contextlib", "dataclasses", "threading", "queue",
+                           "__future__", "argparse", "tempfile", "shutil"):
+                tools.add(pkg)
+        for m in _REQUIRE_PATTERNS.finditer(text):
+            pkg = m.group(1).split("/")[0]
+            if not pkg.startswith("."):
+                tools.add(pkg)
+
+    return {
+        "network":      _dedup(net_hits),
+        "exec":         _dedup(exec_hits),
+        "write_paths":  _dedup(write_hits),
+        "read_paths":   _dedup(read_hits),
+        "tools":        sorted(tools),
+    }
+
+
+def _dedup(lst: list) -> list:
+    seen: set = set()
+    out = []
+    for item in lst:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out[:20]  # cap output
+
+
+# ── Policy evaluation ─────────────────────────────────────────────────────────
+
+RISK_ICON = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🔵", "CLEAN": "✅"}
+
+
+def evaluate(detected: dict, policy: dict, scanner_exit: int) -> dict:
+    """
+    Cross-reference detected capabilities against policy allow/deny.
+    Returns per-category evaluation dict.
+    """
+    allow = policy.get("allow", {})
+    deny  = policy.get("deny",  {})
+
+    allow_read   = set(allow.get("read_paths",  []))
+    allow_write  = set(allow.get("write_paths", []))
+    deny_read    = set(deny.get("read_paths",   []))
+    declared_tools = set(allow.get("tools", []))
+
+    def _path_blocked(path: str, deny_set: set[str]) -> bool:
+        return any(path.startswith(d) for d in deny_set)
+
+    def _path_allowed(path: str, allow_set: set[str]) -> bool:
+        if not allow_set:
+            return True  # no restriction declared
+        return any(path.startswith(a) for a in allow_set)
+
+    result: dict[str, dict] = {}
+
+    # ── Network ──────────────────────────────────────────────────────────────
+    if detected["network"]:
+        if not allow.get("network", True):
+            result["network"] = {
+                "risk": "HIGH",
+                "status": "VIOLATION",
+                "detail": f"network calls detected ({len(detected['network'])} hit(s))",
+                "hits": detected["network"][:5],
+            }
+        else:
+            result["network"] = {
+                "risk": "MEDIUM",
+                "status": "WARN",
+                "detail": "network calls detected — policy allows (verify intent)",
+                "hits": detected["network"][:5],
+            }
+    else:
+        result["network"] = {"risk": "CLEAN", "status": "OK", "detail": "no network calls detected", "hits": []}
+
+    # ── Exec ─────────────────────────────────────────────────────────────────
+    if detected["exec"]:
+        if not allow.get("exec", True):
+            result["exec"] = {
+                "risk": "HIGH",
+                "status": "VIOLATION",
+                "detail": f"exec/subprocess detected ({len(detected['exec'])} hit(s))",
+                "hits": detected["exec"][:5],
+            }
+        else:
+            result["exec"] = {
+                "risk": "MEDIUM",
+                "status": "WARN",
+                "detail": "exec/subprocess detected — policy allows (verify intent)",
+                "hits": detected["exec"][:5],
+            }
+    else:
+        result["exec"] = {"risk": "CLEAN", "status": "OK", "detail": "no exec/subprocess detected", "hits": []}
+
+    # ── Tools ─────────────────────────────────────────────────────────────────
+    undeclared_tools = set(detected["tools"]) - declared_tools
+    if undeclared_tools:
+        result["tools"] = {
+            "risk": "LOW",
+            "status": "INFO",
+            "detail": f"{len(undeclared_tools)} undeclared tool(s) imported",
+            "detected": sorted(detected["tools"]),
+            "declared": sorted(declared_tools),
+            "undeclared": sorted(undeclared_tools),
+        }
+    else:
+        result["tools"] = {
+            "risk": "CLEAN",
+            "status": "OK",
+            "detail": "all imported tools declared in policy",
+            "detected": sorted(detected["tools"]),
+            "declared": sorted(declared_tools),
+            "undeclared": [],
+        }
+
+    # ── Read Paths ────────────────────────────────────────────────────────────
+    blocked_reads  = [(f, p) for f, p in detected["read_paths"] if _path_blocked(p, deny_read)]
+    outside_reads  = [(f, p) for f, p in detected["read_paths"]
+                      if not _path_blocked(p, deny_read) and not _path_allowed(p, allow_read)]
+    if blocked_reads:
+        result["read_paths"] = {
+            "risk": "CRITICAL",
+            "status": "VIOLATION",
+            "detail": f"{len(blocked_reads)} access(es) to denied path(s)",
+            "blocked": blocked_reads[:5],
+            "outside_allowed": outside_reads[:5],
+        }
+    elif outside_reads:
+        result["read_paths"] = {
+            "risk": "MEDIUM",
+            "status": "WARN",
+            "detail": f"{len(outside_reads)} access(es) outside declared allow list",
+            "blocked": [],
+            "outside_allowed": outside_reads[:5],
+        }
+    else:
+        result["read_paths"] = {
+            "risk": "CLEAN",
+            "status": "OK",
+            "detail": "all detected reads within allowed paths",
+            "blocked": [],
+            "outside_allowed": [],
+        }
+
+    # ── Write Paths ───────────────────────────────────────────────────────────
+    if detected["write_paths"]:
+        if not allow_write:
+            result["write_paths"] = {
+                "risk": "HIGH",
+                "status": "VIOLATION",
+                "detail": f"write operations detected; policy declares no write_paths",
+                "hits": detected["write_paths"][:5],
+            }
+        else:
+            result["write_paths"] = {
+                "risk": "LOW",
+                "status": "INFO",
+                "detail": f"write operations detected — verify against allowed paths",
+                "hits": detected["write_paths"][:5],
+            }
+    else:
+        result["write_paths"] = {"risk": "CLEAN", "status": "OK", "detail": "no write operations detected", "hits": []}
+
+    # ── Scanner gate ──────────────────────────────────────────────────────────
+    if scanner_exit == 1:
+        result["scanner_gate"] = {
+            "risk": "CRITICAL",
+            "status": "BLOCKED",
+            "detail": "static scanner found critical violation",
+            "hits": [],
+        }
+    elif scanner_exit == 2:
+        result["scanner_gate"] = {
+            "risk": "MEDIUM",
+            "status": "WARN",
+            "detail": "static scanner found suspicious patterns",
+            "hits": [],
+        }
+    else:
+        result["scanner_gate"] = {"risk": "CLEAN", "status": "OK", "detail": "static scan clean", "hits": []}
+
+    return result
+
+
+def overall_result(evaluation: dict) -> str:
+    risks = [v["risk"] for v in evaluation.values()]
+    if "CRITICAL" in risks:
+        return "BLOCKED"
+    if "HIGH" in risks:
+        return "BLOCKED"
+    if "MEDIUM" in risks:
+        return "WARN"
+    return "OK"
+
+
+# ── Report writers ────────────────────────────────────────────────────────────
+
+CATEGORY_LABEL = {
+    "network":      "Network",
+    "exec":         "Exec / Subprocess",
+    "tools":        "Tools / Imports",
+    "read_paths":   "Read Paths",
+    "write_paths":  "Write Paths",
+    "scanner_gate": "Static Scanner Gate",
+}
+
+
+def write_permissions_md(path: Path, skill: str, version: str,
+                         policy: dict, evaluation: dict,
+                         result: str, timestamp: str) -> None:
+    lines = [
+        f"# PERMISSIONS — `{skill}` v{version}",
+        f"",
+        f"> Policy: **{policy.get('name', '?')}** v{policy.get('version', '?')}  ",
+        f"> Scan: {timestamp}  ",
+        f"> Result: {'❌ BLOCKED' if result == 'BLOCKED' else '⚠️ WARN' if result == 'WARN' else '✅ OK'}",
+        "",
+        "## Risk Summary",
+        "",
+        "| Category | Status | Risk | Notes |",
+        "|----------|--------|------|-------|",
+    ]
+    for key, val in evaluation.items():
+        label = CATEGORY_LABEL.get(key, key.replace("_", " ").title())
+        icon  = RISK_ICON.get(val["risk"], "❓")
+        status = val["status"]
+        detail = val.get("detail", "")
+        lines.append(f"| {label} | {status} | {icon} {val['risk']} | {detail} |")
+
+    lines += ["", "## Details", ""]
+
+    # Network
+    ev = evaluation.get("network", {})
+    lines.append("### Network")
+    lines.append(f"- **Policy**: `allow.network: {policy.get('allow', {}).get('network', True)}`")
+    lines.append(f"- **Detected**: {'yes' if ev.get('hits') else 'no'}")
+    for f, hit in ev.get("hits", []):
+        lines.append(f"  - `{f}`: `{hit}`")
+    lines.append("")
+
+    # Exec
+    ev = evaluation.get("exec", {})
+    lines.append("### Exec / Subprocess")
+    lines.append(f"- **Policy**: `allow.exec: {policy.get('allow', {}).get('exec', True)}`")
+    lines.append(f"- **Detected**: {'yes' if ev.get('hits') else 'no'}")
+    for f, hit in ev.get("hits", []):
+        lines.append(f"  - `{f}`: `{hit}`")
+    lines.append("")
+
+    # Tools
+    ev = evaluation.get("tools", {})
+    allow_tools = policy.get("allow", {}).get("tools", [])
+    lines.append("### Tools / Imports")
+    lines.append(f"- **Policy declares**: `{allow_tools or '[]'}`")
+    lines.append(f"- **Detected imports**: `{ev.get('detected', [])}`")
+    if ev.get("undeclared"):
+        lines.append(f"- **Undeclared**: `{ev['undeclared']}`")
+    lines.append("")
+
+    # Read Paths
+    ev = evaluation.get("read_paths", {})
+    lines.append("### Read Paths")
+    lines.append(f"- **Policy allow**: `{policy.get('allow', {}).get('read_paths', [])}`")
+    lines.append(f"- **Policy deny**: `{policy.get('deny', {}).get('read_paths', [])}`")
+    for f, p in ev.get("blocked", []):
+        lines.append(f"  - 🚫 DENIED: `{p}` in `{f}`")
+    for f, p in ev.get("outside_allowed", []):
+        lines.append(f"  - ⚠️  OUTSIDE ALLOW: `{p}` in `{f}`")
+    if not ev.get("blocked") and not ev.get("outside_allowed"):
+        lines.append("  - ✅ all reads within policy")
+    lines.append("")
+
+    # Write Paths
+    ev = evaluation.get("write_paths", {})
+    lines.append("### Write Paths")
+    lines.append(f"- **Policy allow**: `{policy.get('allow', {}).get('write_paths', [])}`")
+    for f, hit in ev.get("hits", []):
+        lines.append(f"  - `{f}`: `{hit}`")
+    if not ev.get("hits"):
+        lines.append("  - ✅ no write operations detected")
+    lines.append("")
+
+    path.write_text("\n".join(lines) + "\n")
+
+
+def write_report_md(path: Path, skill: str, version: str, policy: dict,
+                    evaluation: dict, scanner_outputs: str,
+                    result: str, timestamp: str) -> None:
+    result_icon = {"BLOCKED": "❌", "WARN": "⚠️", "OK": "✅"}.get(result, "?")
+    lines = [
+        f"# SkillGate Report — `{skill}` v{version}",
+        "",
+        f"| | |",
+        f"|---|---|",
+        f"| Policy | `{policy.get('name','?')}` v{policy.get('version','?')} |",
+        f"| Result | {result_icon} **{result}** |",
+        f"| Timestamp | {timestamp} |",
+        "",
+        "## Permission Evaluation",
+        "",
+        "| Category | Status | Risk | Detail |",
+        "|----------|--------|------|--------|",
+    ]
+    for key, val in evaluation.items():
+        label  = CATEGORY_LABEL.get(key, key.replace("_", " ").title())
+        icon   = RISK_ICON.get(val["risk"], "❓")
+        status = val["status"]
+        detail = val.get("detail", "")
+        lines.append(f"| {label} | {status} | {icon} {val['risk']} | {detail} |")
+
+    # Remediation
+    violations = [(k, v) for k, v in evaluation.items() if v["status"] in ("VIOLATION", "BLOCKED")]
+    warns      = [(k, v) for k, v in evaluation.items() if v["status"] == "WARN"]
+    lines += ["", "## Remediation", ""]
+    if violations:
+        lines.append("**Must fix before admission:**")
+        for k, v in violations:
+            lines.append(f"- {CATEGORY_LABEL.get(k, k)}: {v['detail']}")
+        lines.append("")
+    if warns:
+        lines.append("**Requires human review:**")
+        for k, v in warns:
+            lines.append(f"- {CATEGORY_LABEL.get(k, k)}: {v['detail']}")
+        lines.append("")
+    if not violations and not warns:
+        lines.append("✅ No remediation required.")
+
+    if scanner_outputs.strip():
+        lines += ["", "## Raw Scanner Output", "", "```", scanner_outputs[:3000], "```", ""]
+
+    path.write_text("\n".join(lines) + "\n")
+
+
+def write_report_json(path: Path, skill: str, version: str, policy: dict,
+                      evaluation: dict, result: str, timestamp: str) -> None:
+    data = {
+        "skill":     skill,
+        "version":   version,
+        "policy":    policy.get("name", "?"),
+        "timestamp": timestamp,
+        "result":    result,
+        "evaluation": {
+            k: {"status": v["status"], "risk": v["risk"], "detail": v.get("detail", "")}
+            for k, v in evaluation.items()
+        },
+        "raw_evaluation": evaluation,
+    }
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+
+
+# ── scan subcommand ───────────────────────────────────────────────────────────
+
+def cmd_scan(args: argparse.Namespace) -> int:
+    skill_path = Path(os.path.realpath(args.skill_path))
+    if not skill_path.exists():
+        print(f"Error: skill path not found: {skill_path}", file=sys.stderr)
+        return 1
+
+    skill_name = skill_path.name
+    version    = getattr(args, "skill_version", "0.0.0")
+    timestamp  = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    print(f"[skillgate] Scanning: {skill_path}")
+    print(f"[skillgate] Policy:   {args.policy}")
+
+    policy = load_policy(args.policy)
+
+    # ── symlink escape check ────────────────────────────────────────────────
+    symlink_escapes = []
+    for link in skill_path.rglob("*"):
+        if link.is_symlink():
+            resolved = Path(os.path.realpath(str(link)))
+            try:
+                resolved.relative_to(skill_path)
+            except ValueError:
+                symlink_escapes.append(f"{link} -> {resolved}")
+
+    if symlink_escapes:
+        print(f"❌ BLOCKED: {len(symlink_escapes)} symlink escape(s) detected:", file=sys.stderr)
+        for s in symlink_escapes:
+            print(f"   {s}", file=sys.stderr)
+        return 1
+
+    # ── static scanners ─────────────────────────────────────────────────────
+    scanner_out = ""
+    worst_exit  = 0
+
+    for script_name, extra_args in [
+        ("policy_check.py",            [str(skill_path)]),
+        ("check-dangerous-commands.py",[str(skill_path)]),
+        ("check-ioc.py",               [str(skill_path), skill_name]),
+        ("check-dependencies.py",      [str(skill_path)]),
+    ]:
+        script = SCRIPTS_DIR / script_name
+        exit_code, output = run_scanner(script, *extra_args)
+        scanner_out += f"\n### {script_name}\n{output}\n"
+        if exit_code > worst_exit:
+            worst_exit = exit_code
+        status = {0: "OK", 1: "BLOCKED", 2: "WARN"}.get(exit_code, f"exit={exit_code}")
+        print(f"  {script_name}: {status}")
+
+    # ── pattern detection ────────────────────────────────────────────────────
+    detected   = detect_in_skill(skill_path)
+    evaluation = evaluate(detected, policy, worst_exit)
+    result     = overall_result(evaluation)
+
+    # ── write reports ────────────────────────────────────────────────────────
+    out_root = Path(args.out) / skill_name
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    write_permissions_md(out_root / "PERMISSIONS.md", skill_name, version,
+                         policy, evaluation, result, timestamp)
+    write_report_md(out_root / "report.md", skill_name, version,
+                    policy, evaluation, scanner_out, result, timestamp)
+    write_report_json(out_root / "report.json", skill_name, version,
+                      policy, evaluation, result, timestamp)
+
+    result_icon = {"BLOCKED": "❌", "WARN": "⚠️ ", "OK": "✅"}.get(result, "?")
+    print(f"\n{result_icon} Result: {result}")
+    print(f"📄 Reports: {out_root}/")
+    return 1 if result == "BLOCKED" else 0
+
+
+# ── main ──────────────────────────────────────────────────────────────────────
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        prog="skillgate",
+        description="SkillGate — skill security scanner",
+    )
+    sub = ap.add_subparsers(dest="command")
+
+    scan_p = sub.add_parser("scan", help="Scan a skill directory")
+    scan_p.add_argument("skill_path",     help="Path to the skill directory")
+    scan_p.add_argument("--policy",       default="balanced",
+                        help="Policy name (default: balanced)")
+    scan_p.add_argument("--skill-version",default="0.0.0", dest="skill_version",
+                        help="Skill version string for reports")
+    scan_p.add_argument("--out",          default=str(REPO_ROOT / "reports"),
+                        help="Output directory (default: ./reports)")
+
+    list_p = sub.add_parser("policies", help="List available policies")
+
+    args = ap.parse_args()
+
+    if args.command == "scan":
+        return cmd_scan(args)
+
+    if args.command == "policies":
+        print("Available policies:")
+        for name in list_policies():
+            p = load_policy(name)
+            print(f"  {name:12s}  {p.get('description', '')}")
+        return 0
+
+    ap.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

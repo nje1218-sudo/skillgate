@@ -1,0 +1,21 @@
+name: balanced
+version: 0.1
+description: "Default policy — network and exec off, workspace read/write only."
+
+allow:
+  network: false
+  exec: false
+  tools: []                          # declared tool names; empty = no tools pre-approved
+  read_paths:
+    - "/home/node/.openclaw/workspace"
+  write_paths:
+    - "/home/node/.openclaw/workspace"
+
+deny:
+  read_paths:
+    - "/home/node/.openclaw/secrets"
+    - "/home/node/.ssh"
+    - "/etc"
+    - "/root"
+    - "/proc"
+    - "/sys"

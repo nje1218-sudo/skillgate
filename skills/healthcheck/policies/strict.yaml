@@ -1,0 +1,23 @@
+name: strict
+version: 0.1
+description: "Strict policy — no network, no exec, no writes, tightest path deny list."
+
+allow:
+  network: false
+  exec: false
+  tools: []
+  read_paths:
+    - "/home/node/.openclaw/workspace"
+  write_paths: []                    # no writes allowed
+
+deny:
+  read_paths:
+    - "/home/node/.openclaw/secrets"
+    - "/home/node/.ssh"
+    - "/etc"
+    - "/root"
+    - "/home"
+    - "/proc"
+    - "/sys"
+    - "/var"
+    - "/tmp"

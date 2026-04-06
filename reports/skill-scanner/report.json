@@ -1,0 +1,91 @@
+{
+  "skill": "skill-scanner",
+  "version": "0.1",
+  "policy": "balanced",
+  "timestamp": "2026-04-06T05:25:17Z",
+  "result": "BLOCKED",
+  "evaluation": {
+    "network": {
+      "status": "OK",
+      "risk": "CLEAN",
+      "detail": "no network calls detected"
+    },
+    "exec": {
+      "status": "VIOLATION",
+      "risk": "HIGH",
+      "detail": "exec/subprocess detected (1 hit(s))"
+    },
+    "tools": {
+      "status": "INFO",
+      "risk": "LOW",
+      "detail": "2 undeclared tool(s) imported"
+    },
+    "read_paths": {
+      "status": "OK",
+      "risk": "CLEAN",
+      "detail": "all detected reads within allowed paths"
+    },
+    "write_paths": {
+      "status": "OK",
+      "risk": "CLEAN",
+      "detail": "no write operations detected"
+    },
+    "scanner_gate": {
+      "status": "OK",
+      "risk": "CLEAN",
+      "detail": "static scan clean"
+    }
+  },
+  "raw_evaluation": {
+    "network": {
+      "risk": "CLEAN",
+      "status": "OK",
+      "detail": "no network calls detected",
+      "hits": []
+    },
+    "exec": {
+      "risk": "HIGH",
+      "status": "VIOLATION",
+      "detail": "exec/subprocess detected (1 hit(s))",
+      "hits": [
+        [
+          "scan.py",
+          "subprocess.run"
+        ]
+      ]
+    },
+    "tools": {
+      "risk": "LOW",
+      "status": "INFO",
+      "detail": "2 undeclared tool(s) imported",
+      "detected": [
+        "subprocess",
+        "venv"
+      ],
+      "declared": [],
+      "undeclared": [
+        "subprocess",
+        "venv"
+      ]
+    },
+    "read_paths": {
+      "risk": "CLEAN",
+      "status": "OK",
+      "detail": "all detected reads within allowed paths",
+      "blocked": [],
+      "outside_allowed": []
+    },
+    "write_paths": {
+      "risk": "CLEAN",
+      "status": "OK",
+      "detail": "no write operations detected",
+      "hits": []
+    },
+    "scanner_gate": {
+      "risk": "CLEAN",
+      "status": "OK",
+      "detail": "static scan clean",
+      "hits": []
+    }
+  }
+}
