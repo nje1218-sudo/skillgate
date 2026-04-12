@@ -1,0 +1,56 @@
+{
+  "name": "skillgate",
+  "version": "1.0.0",
+  "description": "AI agent skill supply-chain security scanner. Runs 6 parallel static scanners (policy, dangerous-commands, IOC, dependencies, injection, YARA) plus an optional L2 dynamic sandbox. Prevents malicious skills from entering your agent's runtime.",
+  "author": "Rong <skillgate@openclaw.ai>",
+  "license": "MIT",
+  "homepage": "https://github.com/nje1218-sudo/SkillGate",
+  "repository": "https://github.com/nje1218-sudo/SkillGate",
+  "tags": ["security", "supply-chain", "owasp", "static-analysis", "sandbox", "policy-as-code", "yara", "injection"],
+  "permissions": {
+    "network": false,
+    "ssh": false,
+    "sudo": false,
+    "read_paths": ["<user-specified skill directory>"],
+    "write_paths": ["reports/<skill-name>/"],
+    "subprocess": "local Python 3 + bash scripts only (no external downloads)"
+  },
+  "architecture": {
+    "scanners": 6,
+    "pipeline": "parallel (ThreadPoolExecutor)",
+    "skill_md_tokens": "~850",
+    "design": "6-scanner parallel pipeline: policy, dangerous-commands, IOC, dependencies, injection, YARA",
+    "sandbox_layers": ["Docker", "nsjail", "unshare+strace", "strace"]
+  },
+  "framework_coverage": {
+    "owasp_asi_top_10": "7/10",
+    "mitre_atlas": "partial",
+    "cosai": "partial"
+  },
+  "plans": {
+    "community": {
+      "price": "free",
+      "features": ["完整本地掃描", "balanced/strict policy", "CLI 使用", "CI/CD exit codes"]
+    },
+    "pro": {
+      "price": "monthly subscription",
+      "features": ["自訂 policy profile", "CI/CD 整合範本", "優先技術支援"]
+    },
+    "enterprise": {
+      "price": "contact us",
+      "features": ["私有 policy registry", "SAML SSO", "稽核日誌匯出", "SLA 保障"]
+    }
+  },
+  "contact": "skillgate@openclaw.ai",
+  "compatibility": {
+    "agents": ["openclaw", "clawdbot"],
+    "minVersion": "2026.1.0",
+    "python": ">=3.9",
+    "os": ["linux", "darwin"]
+  },
+  "disclaimers": [
+    "Scanning results do not guarantee zero risk.",
+    "This tool does not replace professional security audits.",
+    "Provided AS IS under MIT License — no warranty expressed or implied."
+  ]
+}
