@@ -1,7 +1,7 @@
 # PERMISSIONS — `malicious_skill` v0.0.0
 
 > Policy: **balanced** v0.1  
-> Scan: 2026-04-12T01:55:12Z  
+> Scan: 2026-04-12T08:08:54Z  
 > Result: ❌ BLOCKED
 
 ## Risk Summary

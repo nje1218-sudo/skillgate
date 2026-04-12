@@ -4,7 +4,7 @@
 |---|---|
 | Policy | `balanced` v0.1 |
 | Result | ❌ **BLOCKED** |
-| Timestamp | 2026-04-12T01:55:12Z |
+| Timestamp | 2026-04-12T08:08:54Z |
 
 ## Permission Evaluation
 

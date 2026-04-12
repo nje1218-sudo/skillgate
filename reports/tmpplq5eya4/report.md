@@ -1,10 +1,10 @@
-# SkillGate Report — `clean_skill` v0.0.0
+# SkillGate Report — `tmpplq5eya4` v0.0.0
 
 | | |
 |---|---|
 | Policy | `balanced` v0.1 |
 | Result | ⚠️ **WARN** |
-| Timestamp | 2026-04-12T08:08:53Z |
+| Timestamp | 2026-04-12T08:08:54Z |
 
 ## Permission Evaluation
 
@@ -28,15 +28,21 @@
 ```
 
 ### policy_check.py
-OK: no policy violations detected
+BLOCK_VIOLATIONS:
+- network_exec: /tmp/tmpplq5eya4/tests/skill.py
+- decode_and_run: /tmp/tmpplq5eya4/tests/skill.py
 
 
 ### check-dangerous-commands.py
-OK: no dangerous command patterns detected
+🔴 [BLOCK]
+  - dynamic_execution: /tmp/tmpplq5eya4/tests/skill.py
+🟠 [REQUIRE_APPROVAL]
+  - config_modification: /tmp/tmpplq5eya4/tests/skill.py
 
 
 ### check-ioc.py
-OK: no IOC matches detected
+🟠 [WARN — SUSPICIOUS PATTERN]
+  - suspicious pattern 'exec\(' in: /tmp/tmpplq5eya4/tests/skill.py
 
 
 ### check-dependencies.py
@@ -44,7 +50,9 @@ OK: no dependency manifests found
 
 
 ### check-injection.py
-OK: no prompt injection patterns detected
+🔴 [BLOCK — INJECTION PATTERN]
+  🔴 action_directives: /tmp/tmpplq5eya4/tests/skill.py
+     snippet: 'Exfiltrate'
 
 
 ### check-yara.py

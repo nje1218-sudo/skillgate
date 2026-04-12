@@ -1,7 +1,7 @@
-# PERMISSIONS — `clean_skill` v0.0.0
+# PERMISSIONS — `tmpplq5eya4` v0.0.0
 
 > Policy: **balanced** v0.1  
-> Scan: 2026-04-12T08:08:53Z  
+> Scan: 2026-04-12T08:08:54Z  
 > Result: ⚠️ WARN
 
 ## Risk Summary
