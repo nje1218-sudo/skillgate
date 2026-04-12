@@ -90,6 +90,21 @@ def cmd_ok(name: str) -> bool:
     return shutil.which(name) is not None
 
 
+def unshare_ok() -> bool:
+    """Return True if `unshare --net` is available (Linux user namespaces)."""
+    if not cmd_ok('unshare') or sys.platform != 'linux':
+        return False
+    # Quick probe: unshare --user --net true
+    try:
+        result = subprocess.run(
+            ['unshare', '--user', '--net', '--map-root-user', 'true'],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 def docker_ok() -> bool:
     if not cmd_ok('docker'):
         return False
@@ -310,6 +325,65 @@ def run_strace(skill_dir: Path, entry: Path, timeout: int) -> dict:
     return {'method': 'strace', 'findings': dedup(findings)}
 
 
+def run_unshare_strace(skill_dir: Path, entry: Path, timeout: int) -> dict:
+    """strace wrapped in `unshare --net` — network namespace isolated.
+
+    Unlike bare strace, the process runs in a new network namespace with no
+    external routes. Outbound connections get ENETUNREACH immediately, so:
+      - C2 beacons fail silently (no exfiltration)
+      - strace still captures the connect() attempt → exit 2 (WARN)
+
+    Requires Linux user namespaces (CAP_SYS_ADMIN or unprivileged userns).
+    """
+    findings = []
+    strace_log = tempfile.mktemp(suffix='.strace')
+    env = {
+        **os.environ,
+        'HOME': tempfile.mkdtemp(prefix='l2_home_'),
+        'PATH': '/usr/local/bin:/usr/bin:/bin',
+    }
+
+    cmd = [
+        'unshare', '--user', '--net', '--map-root-user',
+        'strace', '-f',
+        '-e', 'trace=network,openat,open,connect,execve',
+        '-o', strace_log,
+        'timeout', str(timeout),
+        'bash', str(entry),
+    ]
+
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, text=True,
+            cwd=str(skill_dir), timeout=timeout + 20, env=env,
+        )
+        if r.returncode == 124:
+            findings.append(finding('warn', 'timeout',
+                f'Skill exceeded {timeout}s in unshare sandbox'))
+
+        # Any network signal → BLOCK (network was isolated, so attempt = malicious intent)
+        strace_text = Path(strace_log).read_text(errors='ignore')
+        net_findings = [f for f in _parse_strace(strace_text) if f['category'] == 'network_attempt']
+        other_findings = [f for f in _parse_strace(strace_text) if f['category'] != 'network_attempt']
+        # Escalate network attempts to block (network was isolated — trying anyway is suspicious)
+        for nf in net_findings:
+            nf['level'] = 'block'
+        findings.extend(net_findings)
+        findings.extend(other_findings)
+
+    except subprocess.TimeoutExpired:
+        findings.append(finding('warn', 'timeout', 'unshare+strace runner timed out'))
+    except Exception as e:
+        findings.append(finding('warn', 'sandbox_error', f'unshare+strace error: {e}'))
+    finally:
+        try:
+            Path(strace_log).unlink()
+        except Exception:
+            pass
+
+    return {'method': 'unshare+strace', 'findings': dedup(findings)}
+
+
 def _parse_strace(output: str) -> list[dict]:
     findings = []
 
@@ -368,14 +442,20 @@ def main() -> int:
         print('L2: no executable entry point found — skipping dynamic analysis')
         return 0
 
-    # Select isolation method
+    # Select isolation method (priority: Docker > nsjail > unshare+strace > bare strace)
     if docker_ok():
         method_name = 'docker'
         run_fn = run_docker
     elif cmd_ok('nsjail'):
         method_name = 'nsjail'
         run_fn = run_nsjail
+    elif unshare_ok() and cmd_ok('strace'):
+        # Network-namespace isolated strace: C2 beacons fail, attempts still detected
+        method_name = 'unshare+strace'
+        run_fn = run_unshare_strace
     elif cmd_ok('strace'):
+        print('L2: NOTE — strace fallback is passive (no network isolation). '
+              'Install Docker or nsjail for stronger guarantees.')
         method_name = 'strace'
         run_fn = run_strace
     else:

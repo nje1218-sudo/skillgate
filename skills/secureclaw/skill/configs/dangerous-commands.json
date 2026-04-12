@@ -1,6 +1,6 @@
 {
-  "version": "2.1.0",
-  "owasp_asi": "ASI02,ASI05",
+  "version": "2.2.0",
+  "owasp_asi": "ASI02,ASI05,ASI01",
   "categories": {
     "remote_code_execution": {
       "severity": "critical", "action": "block",
@@ -79,6 +79,31 @@
         "wget\\s*.*--post-file",
         "nc\\s+-[lp].*-e",
         "socat\\s+.*TCP"
+      ]
+    },
+    "shell_interpolation": {
+      "severity": "critical", "action": "block",
+      "description": "Shell string interpolation in exec calls — enables command injection (e.g. TUI execAsync(`npx add ${source}`))",
+      "patterns": [
+        "exec(?:Sync|Async|File)?\\s*\\(\\s*`[^`]*\\$\\{",
+        "spawn\\s*\\(\\s*`[^`]*\\$\\{",
+        "child_process\\.[a-zA-Z]+\\s*\\([^)\\n]*\\$\\{",
+        "execFileSync\\s*\\([^,\\n]*\\$\\{",
+        "spawnSync\\s*\\([^,\\n]*\\$\\{"
+      ]
+    },
+    "autonomous_ai_cli": {
+      "severity": "high", "action": "require_approval",
+      "description": "AI coding CLI invoked in fully-autonomous / no-approval mode — uncontrolled code execution",
+      "patterns": [
+        "codex.*--full-auto",
+        "aider.*--yes(?:-always)?",
+        "claude.*--dangerously-skip-permissions",
+        "claude.*--no-permission-prompt",
+        "cursor.*--auto-approve",
+        "npx.*skills.*add.*--force",
+        "npx.*openclaw.*--auto",
+        "continue.*--auto-accept"
       ]
     }
   }

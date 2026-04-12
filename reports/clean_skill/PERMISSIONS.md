@@ -1,8 +1,8 @@
 # PERMISSIONS — `clean_skill` v0.0.0
 
 > Policy: **balanced** v0.1  
-> Scan: 2026-04-06T19:25:58Z  
-> Result: ✅ OK
+> Scan: 2026-04-12T01:55:11Z  
+> Result: ⚠️ WARN
 
 ## Risk Summary
 
@@ -13,7 +13,7 @@
 | Tools / Imports | OK | ✅ CLEAN | all imported tools declared in policy |
 | Read Paths | OK | ✅ CLEAN | all detected reads within allowed paths |
 | Write Paths | OK | ✅ CLEAN | no write operations detected |
-| Static Scanner Gate | OK | ✅ CLEAN | static scan clean |
+| Static Scanner Gate | WARN | 🟡 MEDIUM | static scanner found suspicious patterns |
 
 ## Details
 

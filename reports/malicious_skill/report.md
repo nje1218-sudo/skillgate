@@ -4,7 +4,7 @@
 |---|---|
 | Policy | `balanced` v0.1 |
 | Result | ❌ **BLOCKED** |
-| Timestamp | 2026-04-06T19:25:58Z |
+| Timestamp | 2026-04-12T01:55:12Z |
 
 ## Permission Evaluation
 
@@ -52,6 +52,16 @@ BLOCK_VIOLATIONS:
 
 ### check-dependencies.py
 OK: no dependency manifests found
+
+
+### check-injection.py
+🔴 [BLOCK — INJECTION PATTERN]
+  🔴 action_directives: /home/user/SkillGate/tests/fixtures/malicious_skill/skill.py
+     snippet: 'Exfiltrate'
+
+
+### check-yara.py
+# SKIP: yara not available (install yara-python or yara CLI)
 
 
 ```

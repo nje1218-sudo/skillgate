@@ -6,6 +6,10 @@ Usage:
   skillgate scan <skill_path> --policy strict
   skillgate scan <skill_path> --exclude tests --exclude fixtures
 
+Runs 6 scanners in parallel:
+  policy_check, check-dangerous-commands, check-ioc,
+  check-dependencies, check-injection, check-yara
+
 Scans a skill directory against a named policy and writes:
   reports/<skill_name>/PERMISSIONS.md
   reports/<skill_name>/report.md
@@ -553,9 +557,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
         ("check-dangerous-commands.py", SECURECLAW_DIR, [str(skill_path)]),
         ("check-ioc.py",               SECURECLAW_DIR, [str(skill_path), skill_name]),
         ("check-dependencies.py",      SECURECLAW_DIR, [str(skill_path)]),
+        ("check-injection.py",         SECURECLAW_DIR, [str(skill_path)]),
+        ("check-yara.py",              SECURECLAW_DIR, [str(skill_path)]),
     ]
     scanner_results: dict[str, tuple[int, str]] = {}
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         futures = {
             pool.submit(run_scanner, sdir / name, *extra): name
             for name, sdir, extra in scanner_tasks
